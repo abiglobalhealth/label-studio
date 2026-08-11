@@ -60,6 +60,18 @@
         "decorators": ""
     },
     {
+        "url": "/organization/workspaces",
+        "module": "organizations.views.simple_view",
+        "name": "organizations:organization-simple-workspaces",
+        "decorators": ""
+    },
+    {
+        "url": "/organization/<path:subpath>",
+        "module": "organizations.views.simple_view",
+        "name": "organizations:organization-simple-subpath",
+        "decorators": ""
+    },
+    {
         "url": "/people/",
         "module": "organizations.views.organization_people_list",
         "name": "organizations:organization-index",
@@ -96,6 +108,12 @@
         "decorators": ""
     },
     {
+        "url": "/api/organizations/<int:pk>/memberships/<int:user_pk>/role",
+        "module": "organizations.api.OrganizationMemberRoleUpdateAPI",
+        "name": "organizations:api:organization-membership-role-update",
+        "decorators": ""
+    },
+    {
         "url": "/api/invite",
         "module": "organizations.api.OrganizationInviteAPI",
         "name": "organizations:organization-invite",
@@ -105,6 +123,90 @@
         "url": "/api/invite/reset-token",
         "module": "organizations.api.OrganizationResetTokenAPI",
         "name": "organizations:organization-reset-token",
+        "decorators": ""
+    },
+    {
+        "url": "/api/workspaces",
+        "module": "workspaces.api.WorkspaceListCreateAPI",
+        "name": "workspaces:workspace-list",
+        "decorators": ""
+    },
+    {
+        "url": "/api/workspaces/<int:pk>",
+        "module": "workspaces.api.WorkspaceDetailAPI",
+        "name": "workspaces:workspace-detail",
+        "decorators": ""
+    },
+    {
+        "url": "/api/teams",
+        "module": "workspaces.api.TeamListCreateAPI",
+        "name": "workspaces:team-list",
+        "decorators": ""
+    },
+    {
+        "url": "/api/teams/<int:pk>",
+        "module": "workspaces.api.TeamDetailAPI",
+        "name": "workspaces:team-detail",
+        "decorators": ""
+    },
+    {
+        "url": "/api/teams/members",
+        "module": "workspaces.api.TeamMemberListCreateAPI",
+        "name": "workspaces:team-member-list",
+        "decorators": ""
+    },
+    {
+        "url": "/api/teams/members/<int:pk>",
+        "module": "workspaces.api.TeamMemberDetailAPI",
+        "name": "workspaces:team-member-detail",
+        "decorators": ""
+    },
+    {
+        "url": "/api/topics",
+        "module": "workspaces.api.TopicListCreateAPI",
+        "name": "workspaces:topic-list",
+        "decorators": ""
+    },
+    {
+        "url": "/api/topics/<int:pk>",
+        "module": "workspaces.api.TopicDetailAPI",
+        "name": "workspaces:topic-detail",
+        "decorators": ""
+    },
+    {
+        "url": "/api/workspaces/users",
+        "module": "workspaces.api.WorkspaceUserAssignmentListCreateAPI",
+        "name": "workspaces:workspace-user-assignment-list",
+        "decorators": ""
+    },
+    {
+        "url": "/api/workspaces/users/<int:pk>",
+        "module": "workspaces.api.WorkspaceUserAssignmentDetailAPI",
+        "name": "workspaces:workspace-user-assignment-detail",
+        "decorators": ""
+    },
+    {
+        "url": "/api/workspaces/teams",
+        "module": "workspaces.api.WorkspaceTeamAssignmentListCreateAPI",
+        "name": "workspaces:workspace-team-assignment-list",
+        "decorators": ""
+    },
+    {
+        "url": "/api/workspaces/teams/<int:pk>",
+        "module": "workspaces.api.WorkspaceTeamAssignmentDetailAPI",
+        "name": "workspaces:workspace-team-assignment-detail",
+        "decorators": ""
+    },
+    {
+        "url": "/api/workspaces/topics",
+        "module": "workspaces.api.WorkspaceTopicAssignmentListCreateAPI",
+        "name": "workspaces:workspace-topic-assignment-list",
+        "decorators": ""
+    },
+    {
+        "url": "/api/workspaces/topics/<int:pk>",
+        "module": "workspaces.api.WorkspaceTopicAssignmentDetailAPI",
+        "name": "workspaces:workspace-topic-assignment-detail",
         "decorators": ""
     },
     {
@@ -135,6 +237,18 @@
         "url": "/api/projects/<int:pk>/",
         "module": "projects.api.ProjectAPI",
         "name": "projects:api:project-detail",
+        "decorators": ""
+    },
+    {
+        "url": "/api/projects/<int:pk>/archive/",
+        "module": "projects.api.ProjectArchiveAPI",
+        "name": "projects:api:project-archive",
+        "decorators": ""
+    },
+    {
+        "url": "/api/projects/<int:pk>/restore/",
+        "module": "projects.api.ProjectRestoreAPI",
+        "name": "projects:api:project-restore",
         "decorators": ""
     },
     {
@@ -1008,6 +1122,12 @@
         "decorators": ""
     },
     {
+        "url": "/data/local-files/",
+        "module": "io_storages.localfiles.views.localfiles_data",
+        "name": "storages:localfiles_data",
+        "decorators": ""
+    },
+    {
         "url": "/api/ml/",
         "module": "ml.api.MLBackendListAPI",
         "name": "ml:api:ml-list",
@@ -1137,12 +1257,6 @@
         "url": "/api/fsm/entities/<str:entity_name>/<int:entity_id>/transition/",
         "module": "fsm.api.FSMEntityTransitionAPI",
         "name": "fsm:fsm-entity-transition",
-        "decorators": ""
-    },
-    {
-        "url": "/data/local-files/",
-        "module": "io_storages.localfiles.views.localfiles_data",
-        "name": "storages:localfiles_data",
         "decorators": ""
     },
     {

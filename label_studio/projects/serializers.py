@@ -32,11 +32,13 @@ from label_studio_sdk.label_interface.control_tags import (
     VideoRectangleTag,
 )
 from projects.models import Project, ProjectImport, ProjectOnboarding, ProjectReimport, ProjectSummary
+from core.rbac import can_manage_workspace
 from rest_flex_fields import FlexFieldsModelSerializer
 from rest_framework import serializers
 from rest_framework.serializers import SerializerMethodField
 from tasks.models import Task
 from users.serializers import UserSimpleSerializer
+from workspaces.models import Topic, Workspace
 
 
 @extend_schema_field({'type': 'object', 'additionalProperties': True})
@@ -148,7 +150,21 @@ class ProjectSerializer(FlexFieldsModelSerializer):
 
     queue_total = serializers.SerializerMethodField()
     queue_done = serializers.SerializerMethodField()
+    topic_title = serializers.SerializerMethodField(read_only=True)
     state = FSMStateField(read_only=True)  # FSM state - automatically uses annotation if present
+
+    workspace = serializers.PrimaryKeyRelatedField(
+        queryset=Workspace.objects.all(),
+        required=False,
+        allow_null=True,
+        help_text='Workspace the project belongs to.',
+    )
+    topic = serializers.PrimaryKeyRelatedField(
+        queryset=Topic.objects.all(),
+        required=False,
+        allow_null=True,
+        help_text='Topic associated with the project.',
+    )
 
     @property
     def user_id(self):
@@ -160,6 +176,10 @@ class ProjectSerializer(FlexFieldsModelSerializer):
     @staticmethod
     def get_config_has_control_tags(project) -> bool:
         return len(project.get_parsed_config()) > 0
+
+    @staticmethod
+    def get_topic_title(project) -> str | None:
+        return project.topic.title if project.topic_id and project.topic else None
 
     @staticmethod
     def get_config_suitable_for_bulk_annotation(project) -> bool:
@@ -249,6 +269,29 @@ class ProjectSerializer(FlexFieldsModelSerializer):
                 pass
         raise serializers.ValidationError('Color must be in "#RRGGBB" format')
 
+    def _get_request_organization(self):
+        request = self.context.get('request')
+        user = getattr(request, 'user', None)
+        return getattr(user, 'active_organization', None)
+
+    def validate_workspace(self, value):
+        if value is None:
+            return value
+        organization = self._get_request_organization()
+        if organization is not None and value.organization_id != organization.id:
+            raise serializers.ValidationError('Workspace does not belong to the organization.')
+        if organization is not None and not can_manage_workspace(self.context['request'].user, value):
+            raise serializers.ValidationError('You can only use workspaces assigned to your team.')
+        return value
+
+    def validate_topic(self, value):
+        if value is None:
+            return value
+        organization = self._get_request_organization()
+        if organization is not None and value.organization_id != organization.id:
+            raise serializers.ValidationError('Topic does not belong to the organization.')
+        return value
+
     def validate_control_weights(self, value):
         if not value:
             return value
@@ -277,6 +320,9 @@ class ProjectSerializer(FlexFieldsModelSerializer):
             'enable_empty_annotation',
             'show_annotation_history',
             'organization',
+            'workspace',
+            'topic',
+            'topic_title',
             'color',
             'maximum_annotations',
             'is_published',
@@ -308,6 +354,8 @@ class ProjectSerializer(FlexFieldsModelSerializer):
             'skip_queue',
             'reveal_preannotations_interactively',
             'pinned_at',
+            'archived_at',
+            'archived_by',
             'finished_task_number',
             'queue_total',
             'queue_done',

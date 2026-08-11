@@ -5,6 +5,7 @@ import logging
 from core.utils.common import create_hash, load_func
 from django.conf import settings
 from django.db import models, transaction
+from django.db.models import F
 from django.db.models import Count, Q
 from django.utils import timezone
 from django.utils.functional import cached_property
@@ -16,6 +17,13 @@ OrganizationMemberMixin = load_func(settings.ORGANIZATION_MEMBER_MIXIN)
 
 
 class OrganizationMember(OrganizationMemberMixin, models.Model):
+    class Roles(models.TextChoices):
+        OWNER = 'OWNER', 'Owner'
+        ADMIN = 'ADMIN', 'Admin'
+        MANAGER = 'MANAGER', 'Manager'
+        ANNOTATOR = 'ANNOTATOR', 'Annotator'
+        VIEWER = 'VIEWER', 'Viewer'
+
     """ """
 
     user = models.ForeignKey(
@@ -38,6 +46,15 @@ class OrganizationMember(OrganizationMemberMixin, models.Model):
         'If NULL, the member is not considered deleted.',
     )
 
+    role = models.CharField(
+        _('role'),
+        max_length=32,
+        choices=Roles.choices,
+        default=Roles.ANNOTATOR,
+        help_text='Organization membership role used for RBAC checks.',
+        db_index=True,
+    )
+
     # objects = OrganizationMemberQuerySet.as_manager()
 
     @classmethod
@@ -53,7 +70,7 @@ class OrganizationMember(OrganizationMemberMixin, models.Model):
 
     @cached_property
     def is_owner(self):
-        return self.user.id == self.organization.created_by.id
+        return self.role == OrganizationMember.Roles.OWNER
 
     class Meta:
         ordering = ['pk']
@@ -77,11 +94,27 @@ OrganizationMixin = load_func(settings.ORGANIZATION_MIXIN)
 
 
 class Organization(OrganizationMixin, models.Model):
+    class WorkspaceVisibility(models.TextChoices):
+        AUTO = 'auto', 'Auto'
+        OPEN = 'open', 'Open'
+        RESTRICTED = 'restricted', 'Restricted'
+
     """ """
 
     title = models.CharField(_('organization title'), max_length=1000, null=False)
 
     token = models.CharField(_('token'), max_length=256, default=create_hash, unique=True, null=True, blank=True)
+
+    workspace_visibility = models.CharField(
+        _('workspace visibility'),
+        max_length=16,
+        choices=WorkspaceVisibility.choices,
+        default=WorkspaceVisibility.AUTO,
+        help_text='Controls how workspace visibility restrictions are applied: '
+        "'auto' enables restrictions once any workspace assignment exists, "
+        "'open' keeps all workspaces visible to all members, "
+        "'restricted' only shows assigned workspaces.",
+    )
 
     users = models.ManyToManyField(settings.AUTH_USER_MODEL, related_name='organizations', through=OrganizationMember)
 
@@ -108,12 +141,16 @@ class Organization(OrganizationMixin, models.Model):
 
     @classmethod
     def find_by_user(cls, user, check_deleted=False):
-        memberships = OrganizationMember.objects.filter(user=user).prefetch_related('organization')
+        memberships = (
+            OrganizationMember.objects.filter(user=user, deleted_at__isnull=True)
+            .prefetch_related('organization')
+            .order_by('-created_at', '-pk')
+        )
         if not memberships.exists():
             raise ValueError(f'No memberships found for user {user}')
         membership = memberships.first()
         if check_deleted:
-            return (membership.organization, True) if membership.deleted_at else (membership.organization, False)
+            return membership.organization, False
 
         return membership.organization
 
@@ -143,7 +180,7 @@ class Organization(OrganizationMixin, models.Model):
             return
 
         with transaction.atomic():
-            om = OrganizationMember(user=user, organization=self)
+            om = OrganizationMember(user=user, organization=self, role=OrganizationMember.Roles.ANNOTATOR)
             om.save()
 
             return om
@@ -157,6 +194,26 @@ class Organization(OrganizationMixin, models.Model):
     def reset_token(self):
         self.token = create_hash()
         self.save(update_fields=['token'])
+
+    @classmethod
+    def resolve_invite_token(cls, token: str):
+        """Resolve invite token to organization and optional preset.
+
+        Returns tuple: (organization | None, invite_preset | None)
+        """
+        if not token:
+            return None, None
+
+        preset = (
+            InvitePreset.objects.select_related('organization')
+            .filter(token=token, is_active=True)
+            .first()
+        )
+        if preset and preset.is_available_for_use():
+            return preset.organization, preset
+
+        organization = Organization.objects.filter(token=token).first()
+        return organization, None
 
     def check_max_projects(self):
         """This check raise an exception if the projects limit is hit"""
@@ -195,3 +252,46 @@ class Organization(OrganizationMixin, models.Model):
 
     class Meta:
         db_table = 'organization'
+
+
+class InvitePreset(models.Model):
+    organization = models.ForeignKey('organizations.Organization', on_delete=models.CASCADE, related_name='invite_presets')
+    token = models.CharField(_('token'), max_length=256, default=create_hash, unique=True, db_index=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='created_invite_presets',
+    )
+    default_role = models.CharField(
+        _('default role'),
+        max_length=32,
+        choices=OrganizationMember.Roles.choices,
+        default=OrganizationMember.Roles.ANNOTATOR,
+    )
+    team_ids = models.JSONField(default=list, blank=True)
+    workspace_ids = models.JSONField(default=list, blank=True)
+    expires_at = models.DateTimeField(_('expires at'), null=True, blank=True)
+    max_uses = models.PositiveIntegerField(_('max uses'), null=True, blank=True)
+    uses_count = models.PositiveIntegerField(_('uses count'), default=0)
+    is_active = models.BooleanField(_('active'), default=True)
+    created_at = models.DateTimeField(_('created at'), auto_now_add=True)
+    updated_at = models.DateTimeField(_('updated at'), auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def is_available_for_use(self):
+        now = timezone.now()
+        if not self.is_active:
+            return False
+        if self.expires_at and self.expires_at <= now:
+            return False
+        if self.max_uses is not None and self.uses_count >= self.max_uses:
+            return False
+        return True
+
+    def consume(self):
+        InvitePreset.objects.filter(pk=self.pk).update(uses_count=F('uses_count') + 1)
+        self.refresh_from_db(fields=['uses_count'])

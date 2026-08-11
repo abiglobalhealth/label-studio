@@ -414,6 +414,8 @@ stages:
     method: POST
   response:
     status_code: 302
+- id: logout
+  type: ref
 - id: login
   type: ref
 - name: stage

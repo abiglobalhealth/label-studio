@@ -11,18 +11,21 @@ from django.utils.decorators import method_decorator
 from django.utils.functional import cached_property
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema
-from organizations.models import Organization, OrganizationMember
+from organizations.models import InvitePreset, Organization, OrganizationMember
 from organizations.serializers import (
+    InvitePresetCreateSerializer,
+    InvitePresetSerializer,
     OrganizationIdSerializer,
     OrganizationInviteSerializer,
     OrganizationMemberListParamsSerializer,
     OrganizationMemberListSerializer,
+    OrganizationMemberRoleSerializer,
     OrganizationMemberSerializer,
     OrganizationSerializer,
 )
 from projects.models import Project
 from rest_framework import generics, status
-from rest_framework.exceptions import NotFound, PermissionDenied
+from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
 from rest_framework.generics import get_object_or_404
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
@@ -32,8 +35,10 @@ from rest_framework.settings import api_settings
 from rest_framework.views import APIView
 from tasks.models import Annotation
 from users.models import User
+from workspaces.models import Team, TeamManager, TeamMember, Workspace
 
 from label_studio.core.permissions import ViewClassPermission, all_permissions
+from label_studio.core.rbac import can_manage_member, get_active_membership
 from label_studio.core.utils.params import bool_from_request
 
 logger = logging.getLogger(__name__)
@@ -156,9 +161,7 @@ class OrganizationMemberListAPI(generics.ListAPIView):
     def _get_contributed_to_projects_map(self):
         members = self.paginated_members
         user_ids = [member.user_id for member in members]
-        org_project_ids = Project.objects.filter(organization=self.request.user.active_organization).values_list(
-            'id', flat=True
-        )
+        org_project_ids = Project.objects.for_user(self.request.user).values_list('id', flat=True)
         annotations = (
             Annotation.objects.filter(completed_by__in=list(user_ids), project__in=list(org_project_ids))
             .values('completed_by', 'project_id')
@@ -199,12 +202,22 @@ class OrganizationMemberListAPI(generics.ListAPIView):
 
             # return only active users (exclude DISABLED and NOT_ACTIVATED)
             if active:
-                return org.active_members.prefetch_related('user__om_through').order_by('user__username')
-
-            # organization page to show all members
-            return org.members.prefetch_related('user__om_through').order_by('user__username')
+                queryset = org.active_members
+            else:
+                # organization page to show all members
+                queryset = org.members
         else:
-            return org.members.prefetch_related('user__om_through').order_by('user__username')
+            queryset = org.members
+
+        membership = get_active_membership(self.request.user, organization=org)
+        if membership and membership.role == OrganizationMember.Roles.MANAGER:
+            managed_user_ids = TeamManager.objects.filter(
+                team__organization=org,
+                user=self.request.user,
+            ).values_list('team__members__user_id', flat=True)
+            queryset = queryset.filter(user_id__in=managed_user_ids)
+
+        return queryset.prefetch_related('user__om_through').order_by('user__username')
 
     def list(self, request, *args, **kwargs):
         page = self.paginated_members  # Using cached property to avoid multiple queries
@@ -270,7 +283,7 @@ class OrganizationMemberListAPI(generics.ListAPIView):
 class OrganizationMemberDetailAPI(GetParentObjectMixin, generics.RetrieveDestroyAPIView):
     permission_required = ViewClassPermission(
         GET=all_permissions.organizations_view,
-        DELETE=all_permissions.organizations_change,
+        DELETE=all_permissions.organizations_members_change,
     )
     parent_queryset = Organization.objects.all()
     parser_classes = (JSONParser, FormParser, MultiPartParser)
@@ -284,7 +297,15 @@ class OrganizationMemberDetailAPI(GetParentObjectMixin, generics.RetrieveDestroy
         return api_settings.DEFAULT_PERMISSION_CLASSES
 
     def get_queryset(self):
-        return OrganizationMember.objects.filter(organization=self.parent_object).select_related('user')
+        queryset = OrganizationMember.objects.filter(organization=self.parent_object).select_related('user')
+        membership = get_active_membership(self.request.user, organization=self.parent_object)
+        if membership and membership.role == OrganizationMember.Roles.MANAGER:
+            managed_user_ids = TeamManager.objects.filter(
+                team__organization=self.parent_object,
+                user=self.request.user,
+            ).values_list('team__members__user_id', flat=True)
+            queryset = queryset.filter(user_id__in=managed_user_ids)
+        return queryset
 
     def get_serializer_context(self):
         return {
@@ -318,6 +339,65 @@ class OrganizationMemberDetailAPI(GetParentObjectMixin, generics.RetrieveDestroy
 
 
 @method_decorator(
+    name='patch',
+    decorator=extend_schema(
+        tags=['Organizations'],
+        summary='Update organization member role',
+        description='Update RBAC role for organization member.',
+        request=OrganizationMemberRoleSerializer,
+        responses={200: OrganizationMemberSerializer()},
+    ),
+)
+class OrganizationMemberRoleUpdateAPI(GetParentObjectMixin, generics.UpdateAPIView):
+    permission_required = all_permissions.organizations_members_role
+    parent_queryset = Organization.objects.all()
+    parser_classes = (JSONParser, FormParser, MultiPartParser)
+    serializer_class = OrganizationMemberRoleSerializer
+    http_method_names = ['patch']
+
+    def get_queryset(self):
+        return OrganizationMember.objects.filter(organization=self.parent_object).select_related('user')
+
+    def patch(self, request, pk=None, user_pk=None):
+        org = self.parent_object
+
+        requester_membership = get_active_membership(request.user, organization=org)
+        member = get_object_or_404(self.get_queryset(), user=user_pk, deleted_at__isnull=True)
+        if member.role == OrganizationMember.Roles.OWNER:
+            raise PermissionDenied('Cannot change the role of an organization owner.')
+
+        serializer = self.get_serializer(member, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+
+        if requester_membership is None:
+            raise PermissionDenied('You do not have permission to change member roles.')
+
+        if requester_membership.role == OrganizationMember.Roles.MANAGER:
+            if member.user_id == request.user.id or not can_manage_member(request.user, member):
+                raise PermissionDenied('Managers can only change roles for users in their assigned teams.')
+            if serializer.validated_data['role'] not in {
+                OrganizationMember.Roles.ANNOTATOR,
+                OrganizationMember.Roles.VIEWER,
+            }:
+                raise PermissionDenied('Managers can only assign Annotator or Viewer roles.')
+        elif requester_membership.role not in {
+            OrganizationMember.Roles.OWNER,
+            OrganizationMember.Roles.ADMIN,
+        }:
+            raise PermissionDenied('Only organization owners, admins, and assigned managers can change roles.')
+
+        serializer.save()
+        if member.role != OrganizationMember.Roles.MANAGER:
+            TeamManager.objects.filter(team__organization=org, user=member.user).delete()
+
+        response_serializer = OrganizationMemberSerializer(
+            member,
+            context={'organization': org, 'contributed_to_projects': False},
+        )
+        return Response(response_serializer.data, status=status.HTTP_200_OK)
+
+
+@method_decorator(
     name='get',
     decorator=extend_schema(
         tags=['Organizations'],
@@ -346,7 +426,11 @@ class OrganizationMemberDetailAPI(GetParentObjectMixin, generics.RetrieveDestroy
 class OrganizationAPI(generics.RetrieveUpdateAPIView):
     parser_classes = (JSONParser, FormParser, MultiPartParser)
     queryset = Organization.objects.all()
-    permission_required = all_permissions.organizations_change
+    permission_required = ViewClassPermission(
+        GET=all_permissions.organizations_view,
+        PATCH=all_permissions.organizations_change,
+        PUT=all_permissions.organizations_change,
+    )
     serializer_class = OrganizationSerializer
 
     redirect_route = 'organizations-dashboard'
@@ -418,3 +502,87 @@ class OrganizationResetTokenAPI(APIView):
         serializer = OrganizationInviteSerializer(data={'invite_url': invite_url, 'token': org.token})
         serializer.is_valid()
         return Response(serializer.data, status=201)
+
+
+@method_decorator(
+    name='get',
+    decorator=extend_schema(
+        tags=['Invites'],
+        summary='List scoped invite links',
+        responses={200: InvitePresetSerializer(many=True)},
+    ),
+)
+@method_decorator(
+    name='post',
+    decorator=extend_schema(
+        tags=['Invites'],
+        summary='Create scoped invite link',
+        request=InvitePresetCreateSerializer,
+        responses={201: InvitePresetSerializer},
+    ),
+)
+class OrganizationInvitePresetListCreateAPI(APIView):
+    permission_required = all_permissions.organizations_members_invite
+    parser_classes = (JSONParser,)
+
+    def get(self, request, *args, **kwargs):
+        org = request.user.active_organization
+        presets = InvitePreset.objects.filter(organization=org)
+        membership = get_active_membership(request.user, organization=org)
+        if membership and membership.role == OrganizationMember.Roles.MANAGER:
+            managed_team_ids = set(
+                TeamManager.objects.filter(team__organization=org, user=request.user)
+                .values_list('team_id', flat=True)
+            )
+            presets = [preset for preset in presets if set(preset.team_ids).issubset(managed_team_ids)]
+        serializer = InvitePresetSerializer(presets, many=True)
+        return Response(serializer.data, status=200)
+
+    def post(self, request, *args, **kwargs):
+        org = request.user.active_organization
+        serializer = InvitePresetCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        default_role = serializer.validated_data.get('default_role', OrganizationMember.Roles.ANNOTATOR)
+        team_ids = serializer.validated_data.get('team_ids', [])
+        workspace_ids = serializer.validated_data.get('workspace_ids', [])
+        expires_at = serializer.validated_data.get('expires_at')
+        max_uses = serializer.validated_data.get('max_uses')
+
+        requester_membership = get_active_membership(request.user, organization=org)
+        if requester_membership and requester_membership.role == OrganizationMember.Roles.MANAGER:
+            managed_team_ids = set(
+                TeamManager.objects.filter(team__organization=org, user=request.user)
+                .values_list('team_id', flat=True)
+            )
+            if default_role in {OrganizationMember.Roles.OWNER, OrganizationMember.Roles.ADMIN}:
+                raise PermissionDenied('Managers cannot invite owners or admins.')
+            if not team_ids or not set(team_ids).issubset(managed_team_ids):
+                raise PermissionDenied('Managers can only invite users to their assigned teams.')
+
+        if team_ids:
+            existing_teams = set(
+                Team.objects.filter(organization=org, id__in=team_ids).values_list('id', flat=True)
+            )
+            if existing_teams != set(team_ids):
+                raise ValidationError('One or more team_ids are invalid for this organization')
+
+        if workspace_ids:
+            existing_workspaces = set(
+                Workspace.objects.filter(organization=org, id__in=workspace_ids).values_list('id', flat=True)
+            )
+            if existing_workspaces != set(workspace_ids):
+                raise ValidationError('One or more workspace_ids are invalid for this organization')
+
+        preset = InvitePreset.objects.create(
+            organization=org,
+            created_by=request.user,
+            default_role=default_role,
+            team_ids=team_ids,
+            workspace_ids=workspace_ids,
+            expires_at=expires_at,
+            max_uses=max_uses,
+        )
+
+        response_serializer = InvitePresetSerializer(preset)
+        return Response(response_serializer.data, status=201)

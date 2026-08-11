@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { useHistory } from "react-router";
 import { Button, Typography, useToast } from "@humansignal/ui";
 import { useUpdatePageTitle, createTitleFromSegments } from "@humansignal/core";
+import { useAuth } from "@humansignal/core/providers/AuthProvider";
 import { Label } from "../../components/Form";
 import { modal } from "../../components/Modal/Modal";
 import { useModalControls } from "../../components/Modal/ModalPopup";
@@ -11,13 +12,17 @@ import { Spinner } from "../../components/Spinner/Spinner";
 import { useAPI } from "../../providers/ApiProvider";
 import { useProject } from "../../providers/ProjectProvider";
 import { cn } from "../../utils/bem";
+import { hasPermission } from "../../utils/permissions";
 
 export const DangerZone = () => {
   const { project } = useProject();
   const api = useAPI();
   const history = useHistory();
   const toast = useToast();
+  const { user } = useAuth();
   const [processing, setProcessing] = useState(null);
+  const canDeleteProject = hasPermission(user, "projects.delete");
+  const canResetCache = hasPermission(user, "projects.reset_cache");
 
   useUpdatePageTitle(createTitleFromSegments([project?.title, "Danger Zone"]));
 
@@ -181,6 +186,7 @@ export const DangerZone = () => {
           "to validation errors concerning existing labels, but you are confident that the labels don't exist. You can " +
           "use this action to reset the cache and try again.",
         label: "Reset Cache",
+        hidden: !canResetCache,
       },
       {
         type: "tabs",
@@ -191,9 +197,10 @@ export const DangerZone = () => {
         type: "project",
         help: "Deleting a project removes all tasks, annotations, and project data from the database.",
         label: "Delete Project",
+        hidden: !canDeleteProject,
       },
     ],
-    [project],
+    [project, canDeleteProject, canResetCache],
   );
 
   return (
@@ -213,7 +220,8 @@ export const DangerZone = () => {
             const disabled = btn.disabled || (processing && !waiting);
 
             return (
-              btn.disabled !== true && (
+              btn.disabled !== true &&
+              !btn.hidden && (
                 <div className={cn("settings-wrapper").toClassName()} key={btn.type}>
                   <Typography variant="title" size="large">
                     {btn.label}

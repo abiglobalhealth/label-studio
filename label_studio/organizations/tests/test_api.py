@@ -1,10 +1,12 @@
 from urllib.parse import urlencode
 
+from organizations.models import OrganizationMember
 from organizations.tests.factories import OrganizationFactory
 from projects.tests.factories import ProjectFactory
 from rest_framework.test import APITestCase
 from tasks.tests.factories import AnnotationFactory
 from users.tests.factories import UserFactory
+from workspaces.models import Team, TeamManager, TeamMember
 
 
 class TestOrganizationMemberListAPI(APITestCase):
@@ -124,4 +126,84 @@ class TestOrganizationMemberListAPI(APITestCase):
                 'id': project_2.id,
                 'title': project_2.title,
             }
-        ]
+            ]
+
+    def test_manager_lists_all_members_of_assigned_teams_only(self):
+        manager = UserFactory(username='manager', active_organization=self.organization)
+        OrganizationMember.objects.filter(user=manager, organization=self.organization).update(
+            role=OrganizationMember.Roles.MANAGER
+        )
+        team = Team.objects.create(organization=self.organization, title='Managed team')
+        TeamManager.objects.create(team=team, user=manager)
+        TeamMember.objects.create(team=team, user=self.user_1)
+
+        self.client.force_authenticate(user=manager)
+        response = self.client.get(self.get_url())
+
+        assert response.status_code == 200
+        assert {item['user']['id'] for item in response.json()['results']} == {manager.id, self.user_1.id}
+
+
+class TestOrganizationMemberRoleUpdateAPI(APITestCase):
+    @classmethod
+    def setUpTestData(cls):
+        cls.organization = OrganizationFactory(created_by__username='owner')
+        cls.owner = cls.organization.created_by
+        cls.admin = UserFactory(username='admin', active_organization=cls.organization)
+        OrganizationMember.objects.filter(user=cls.admin, organization=cls.organization).update(
+            role=OrganizationMember.Roles.ADMIN
+        )
+        cls.annotator = UserFactory(username='annotator', active_organization=cls.organization)
+        OrganizationMember.objects.filter(user=cls.annotator, organization=cls.organization).update(
+            role=OrganizationMember.Roles.ANNOTATOR
+        )
+
+    def get_url(self, user):
+        return f'/api/organizations/{self.organization.id}/memberships/{user.id}/role'
+
+    def get_role(self, user):
+        return OrganizationMember.objects.get(user=user, organization=self.organization).role
+
+    def test_owner_can_change_member_role(self):
+        self.client.force_authenticate(user=self.owner)
+        response = self.client.patch(
+            self.get_url(self.annotator), {'role': OrganizationMember.Roles.VIEWER}, format='json'
+        )
+        assert response.status_code == 200
+        assert self.get_role(self.annotator) == OrganizationMember.Roles.VIEWER
+
+    def test_admin_can_change_member_role(self):
+        self.client.force_authenticate(user=self.admin)
+        response = self.client.patch(
+            self.get_url(self.annotator), {'role': OrganizationMember.Roles.VIEWER}, format='json'
+        )
+        assert response.status_code == 200
+        assert self.get_role(self.annotator) == OrganizationMember.Roles.VIEWER
+
+    def test_owner_cannot_change_owner_role(self):
+        self.client.force_authenticate(user=self.owner)
+        response = self.client.patch(
+            self.get_url(self.owner), {'role': OrganizationMember.Roles.VIEWER}, format='json'
+        )
+        assert response.status_code == 403
+
+    def test_manager_can_only_assign_annotator_or_viewer_within_team(self):
+        manager = UserFactory(username='role_manager', active_organization=self.organization)
+        OrganizationMember.objects.filter(user=manager, organization=self.organization).update(
+            role=OrganizationMember.Roles.MANAGER
+        )
+        team = Team.objects.create(organization=self.organization, title='Role team')
+        TeamManager.objects.create(team=team, user=manager)
+        TeamMember.objects.create(team=team, user=self.annotator)
+
+        self.client.force_authenticate(user=manager)
+        response = self.client.patch(
+            self.get_url(self.annotator), {'role': OrganizationMember.Roles.VIEWER}, format='json'
+        )
+        assert response.status_code == 200
+        assert self.get_role(self.annotator) == OrganizationMember.Roles.VIEWER
+
+        response = self.client.patch(
+            self.get_url(self.annotator), {'role': OrganizationMember.Roles.ADMIN}, format='json'
+        )
+        assert response.status_code == 403

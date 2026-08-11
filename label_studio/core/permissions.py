@@ -6,6 +6,7 @@ from typing import Optional
 from pydantic import BaseModel, ConfigDict
 
 import rules
+from core.rbac import has_permission as has_rbac_permission
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +19,9 @@ class AllPermissions(BaseModel):
     organizations_change: str = 'organizations.change'
     organizations_delete: str = 'organizations.delete'
     organizations_invite: str = 'organizations.invite'
+    organizations_members_change: str = 'organizations.members.change'
+    organizations_members_invite: str = 'organizations.members.invite'
+    organizations_members_role: str = 'organizations.members.role'
     projects_create: str = 'projects.create'
     projects_view: str = 'projects.view'
     projects_change: str = 'projects.change'
@@ -60,6 +64,19 @@ class AllPermissions(BaseModel):
     views_change: str = 'views.change'
     views_delete: str = 'views.delete'
 
+    workspaces_view: str = 'workspaces.view'
+    workspaces_create: str = 'workspaces.create'
+    workspaces_change: str = 'workspaces.change'
+    workspaces_delete: str = 'workspaces.delete'
+    teams_view: str = 'teams.view'
+    teams_create: str = 'teams.create'
+    teams_change: str = 'teams.change'
+    teams_delete: str = 'teams.delete'
+    topics_view: str = 'topics.view'
+    topics_create: str = 'topics.create'
+    topics_change: str = 'topics.change'
+    topics_delete: str = 'topics.delete'
+
 
 all_permissions = AllPermissions()
 
@@ -81,5 +98,25 @@ def make_perm(name, pred, overwrite=False):
     rules.add_perm(name, pred)
 
 
+def make_rbac_predicate(permission_name):
+    @rules.predicate
+    def _predicate(user, obj=None):
+        organization = None
+        if hasattr(obj, 'organization'):
+            organization = obj.organization
+        elif hasattr(obj, 'organization_id'):
+            organization = getattr(user, 'active_organization', None)
+
+        if not has_rbac_permission(user, permission_name, organization=organization):
+            return False
+
+        if obj is not None and hasattr(obj, 'has_permission'):
+            return obj.has_permission(user)
+
+        return True
+
+    return _predicate
+
+
 for _, permission_name in all_permissions:
-    make_perm(permission_name, rules.is_authenticated)
+    make_perm(permission_name, make_rbac_predicate(permission_name), overwrite=True)

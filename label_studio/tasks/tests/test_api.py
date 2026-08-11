@@ -284,7 +284,7 @@ class TestTaskAgreementAPI(APITestCase):
         assert response.json() == {'error': 'Task not found'}
 
     @patch('tasks.api.flag_set')
-    @patch.object(Project, 'has_permission')
+    @patch.object(Project, 'has_permission', autospec=True)
     def test_distribution_permission_denied_for_other_project(self, mock_has_permission, mock_flag_set):
         mock_flag_set.return_value = True
         other_org = OrganizationFactory()

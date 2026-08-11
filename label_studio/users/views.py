@@ -58,13 +58,24 @@ def user_signup(request):
 
     # make a new user
     if request.method == 'POST':
-        organization = Organization.objects.first()
+        organization = None
+        invite_preset = None
+        if token:
+            organization, invite_preset = Organization.resolve_invite_token(token)
+        else:
+            organization = Organization.objects.first()
+
         if settings.DISABLE_SIGNUP_WITHOUT_LINK is True:
-            if not (token and organization and token == organization.token):
+            if not (token and organization):
                 raise PermissionDenied()
         else:
-            if token and organization and token != organization.token:
+            if token and not organization:
                 raise PermissionDenied()
+
+        if organization is not None:
+            request.invite_organization = organization
+        if invite_preset is not None:
+            request.invite_preset = invite_preset
 
         user_form = forms.UserSignupForm(request.POST)
         organization_form = OrganizationSignupForm(request.POST)

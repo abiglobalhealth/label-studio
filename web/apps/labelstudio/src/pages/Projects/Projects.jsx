@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { useParams as useRouterParams } from "react-router";
 import { Redirect } from "react-router-dom";
-import { Button } from "@humansignal/ui";
+import { Button, Checkbox, Select } from "@humansignal/ui";
 import { Oneof } from "../../components/Oneof/Oneof";
 import { Spinner } from "../../components/Spinner/Spinner";
 import { ApiContext } from "../../providers/ApiProvider";
@@ -12,6 +12,8 @@ import { DataManagerPage } from "../DataManager/DataManager";
 import { SettingsPage } from "../Settings";
 import { EmptyProjectsList, ProjectsList } from "./ProjectsList";
 import { useAbortController, useUpdatePageTitle } from "@humansignal/core";
+import { useAuth } from "@humansignal/core/providers/AuthProvider";
+import { hasPermission } from "../../utils/permissions";
 import "./Projects.prefix.css";
 
 const getCurrentPage = () => {
@@ -22,12 +24,21 @@ const getCurrentPage = () => {
 
 export const ProjectsPage = () => {
   const api = React.useContext(ApiContext);
+  const { user } = useAuth();
   const abortController = useAbortController();
   const [projectsList, setProjectsList] = React.useState([]);
   const [networkState, setNetworkState] = React.useState(null);
   const [currentPage, setCurrentPage] = useState(getCurrentPage());
   const [totalItems, setTotalItems] = useState(1);
+  const [includeArchived, setIncludeArchived] = useState(false);
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState();
+  const [selectedTopicId, setSelectedTopicId] = useState();
+  const [workspaces, setWorkspaces] = useState([]);
+  const [topics, setTopics] = useState([]);
   const setContextProps = useContextProps();
+
+  const canCreateProjects = hasPermission(user, "projects.create");
+  const canManageProjects = hasPermission(user, "projects.change");
 
   useUpdatePageTitle("Projects");
   const defaultPageSize = Number.parseInt(localStorage.getItem("pages:projects-list") ?? 30);
@@ -40,9 +51,16 @@ export const ProjectsPage = () => {
 
   const fetchProjects = async (page = currentPage, pageSize = defaultPageSize) => {
     setNetworkState("loading");
-    abortController.renew(); // Cancel any in flight requests
+    abortController.renew();
 
-    const requestParams = { page, page_size: pageSize };
+    const requestParams = {
+      page,
+      page_size: pageSize,
+      include_archived: includeArchived,
+    };
+
+    if (selectedWorkspaceId) requestParams.workspace_id = selectedWorkspaceId;
+    if (selectedTopicId) requestParams.topic = String(selectedTopicId);
 
     requestParams.include = [
       "id",
@@ -53,6 +71,10 @@ export const ProjectsPage = () => {
       "is_published",
       "assignment_settings",
       "state",
+      "workspace",
+      "topic",
+      "topic_title",
+      "archived_at",
     ].join(",");
 
     const data = await api.callApi("projects", {
@@ -79,7 +101,12 @@ export const ProjectsPage = () => {
             "total_predictions_number",
             "ground_truth_number",
             "finished_task_number",
+            "workspace",
+            "topic",
+            "topic_title",
+            "archived_at",
           ].join(","),
+          include_archived: includeArchived,
           page_size: pageSize,
         },
         signal: abortController.controller.current.signal,
@@ -106,15 +133,51 @@ export const ProjectsPage = () => {
     await fetchProjects(page, pageSize);
   };
 
+  const fetchWorkspaceAndTopicOptions = async () => {
+    const [workspaceResponse, topicResponse] = await Promise.all([api.callApi("workspaces"), api.callApi("topics")]);
+    setWorkspaces(Array.isArray(workspaceResponse) ? workspaceResponse : workspaceResponse?.results ?? []);
+    setTopics(Array.isArray(topicResponse) ? topicResponse : topicResponse?.results ?? []);
+  };
+
+  const archiveProject = async (projectId) => {
+    await api.callApi("archiveProject", { params: { pk: projectId } });
+    await fetchProjects(currentPage, defaultPageSize);
+  };
+
+  const restoreProject = async (projectId) => {
+    await api.callApi("restoreProject", { params: { pk: projectId } });
+    await fetchProjects(currentPage, defaultPageSize);
+  };
+
   React.useEffect(() => {
     fetchProjects();
+    fetchWorkspaceAndTopicOptions();
   }, []);
 
   React.useEffect(() => {
-    // there is a nice page with Create button when list is empty
-    // so don't show the context button in that case
-    setContextProps({ openModal, showButton: projectsList.length > 0 });
-  }, [projectsList.length]);
+    fetchProjects(1, defaultPageSize);
+  }, [includeArchived, selectedWorkspaceId, selectedTopicId]);
+
+  React.useEffect(() => {
+    setContextProps({ openModal, showButton: projectsList.length > 0 && canCreateProjects });
+  }, [projectsList.length, canCreateProjects]);
+
+  const workspaceOptions = workspaces.map((workspace) => ({
+    value: workspace.id,
+    label: workspace.title,
+  }));
+
+  const topicOptions = topics.map((topic) => ({
+    value: String(topic.id),
+    label: topic.title,
+  }));
+
+  const resetFilters = () => {
+    setIncludeArchived(false);
+    setSelectedWorkspaceId(undefined);
+    setSelectedTopicId(undefined);
+    setCurrentPage(1);
+  };
 
   return (
     <div className={cn("projects-page").toClassName()}>
@@ -123,6 +186,35 @@ export const ProjectsPage = () => {
           <Spinner size={64} />
         </div>
         <div className={cn("projects-page").elem("content").toClassName()} case="loaded">
+          <div className={cn("projects-page").elem("filters").toClassName()}>
+            <Checkbox
+              checked={includeArchived}
+              onChange={(eventOrValue) => {
+                const checked =
+                  typeof eventOrValue === "boolean" ? eventOrValue : Boolean(eventOrValue?.target?.checked);
+
+                setIncludeArchived(checked);
+              }}
+            >
+              Include archived
+            </Checkbox>
+            <Select
+              value={selectedWorkspaceId}
+              onChange={(value) => setSelectedWorkspaceId(value || undefined)}
+              options={[{ value: "", label: "All workspaces" }, ...workspaceOptions]}
+              placeholder="Filter by workspace"
+            />
+            <Select
+              value={selectedTopicId ? String(selectedTopicId) : undefined}
+              onChange={(value) => setSelectedTopicId(value || undefined)}
+              options={[{ value: "", label: "All topics" }, ...topicOptions]}
+              placeholder="Filter by topic"
+            />
+            <Button look="outlined" onClick={resetFilters} aria-label="Clear project filters">
+              Clear filters
+            </Button>
+          </div>
+
           {projectsList.length ? (
             <ProjectsList
               projects={projectsList}
@@ -130,11 +222,15 @@ export const ProjectsPage = () => {
               totalItems={totalItems}
               loadNextPage={loadNextPage}
               pageSize={defaultPageSize}
+              canManageProjects={canManageProjects}
+              onArchiveProject={archiveProject}
+              onRestoreProject={restoreProject}
+              topics={topics}
             />
           ) : (
-            <EmptyProjectsList openModal={openModal} />
+            <EmptyProjectsList openModal={openModal} canCreateProjects={canCreateProjects} />
           )}
-          {modal && <CreateProject onClose={closeModal} />}
+          {modal && canCreateProjects && <CreateProject onClose={closeModal} />}
         </div>
       </Oneof>
     </div>

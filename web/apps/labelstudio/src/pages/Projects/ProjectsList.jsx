@@ -11,12 +11,29 @@ import { ProjectStateChip } from "@humansignal/app-common";
 
 const DEFAULT_CARD_COLORS = ["#FFFFFF", "#FDFDFC"];
 
-export const ProjectsList = ({ projects, currentPage, totalItems, loadNextPage, pageSize }) => {
+export const ProjectsList = ({
+  projects,
+  topics,
+  currentPage,
+  totalItems,
+  loadNextPage,
+  pageSize,
+  canManageProjects,
+  onArchiveProject,
+  onRestoreProject,
+}) => {
   return (
     <>
       <div className={cn("projects-page").elem("list").toClassName()}>
         {projects.map((project) => (
-          <ProjectCard key={project.id} project={project} />
+          <ProjectCard
+            key={project.id}
+            project={project}
+            topics={topics}
+            canManageProjects={canManageProjects}
+            onArchiveProject={onArchiveProject}
+            onRestoreProject={onRestoreProject}
+          />
         ))}
       </div>
       <div className={cn("projects-page").elem("pages").toClassName()}>
@@ -35,7 +52,7 @@ export const ProjectsList = ({ projects, currentPage, totalItems, loadNextPage, 
   );
 };
 
-export const EmptyProjectsList = ({ openModal }) => {
+export const EmptyProjectsList = ({ openModal, canCreateProjects }) => {
   return (
     <div className={cn("empty-projects-page").toClassName()}>
       <img
@@ -45,14 +62,25 @@ export const EmptyProjectsList = ({ openModal }) => {
       />
       <h1 className={cn("empty-projects-page").elem("header").toClassName()}>Heidi doesn't see any projects here!</h1>
       <p>Create one and start labeling your data.</p>
-      <Button onClick={openModal} className="my-8" aria-label="Create new project">
+      <Button onClick={openModal} className="my-8" aria-label="Create new project" disabled={!canCreateProjects}>
         Create Project
       </Button>
     </div>
   );
 };
 
-const ProjectCard = ({ project }) => {
+const ProjectCard = ({ project, topics, canManageProjects, onArchiveProject, onRestoreProject }) => {
+  const topicLabel = useMemo(() => {
+    if (!project.topic) return null;
+    const projectTopic = typeof project.topic === "object" ? project.topic : null;
+    return (
+      project.topic_title ??
+      projectTopic?.title ??
+      topics?.find((topic) => String(topic.id) === String(project.topic))?.title ??
+      null
+    );
+  }, [topics, project.topic, project.topic_title]);
+
   const color = useMemo(() => {
     return DEFAULT_CARD_COLORS.includes(project.color) ? null : project.color;
   }, [project]);
@@ -100,7 +128,13 @@ const ProjectCard = ({ project }) => {
                 content={
                   <Menu contextual>
                     <Menu.Item href={`/projects/${project.id}/settings`}>Settings</Menu.Item>
-                    <Menu.Item href={`/projects/${project.id}/data?labeling=1`}>Label</Menu.Item>
+                    {!project.archived_at && <Menu.Item href={`/projects/${project.id}/data?labeling=1`}>Label</Menu.Item>}
+                    {canManageProjects && !project.archived_at && (
+                      <Menu.Item onClick={() => onArchiveProject?.(project.id)}>Archive</Menu.Item>
+                    )}
+                    {canManageProjects && project.archived_at && (
+                      <Menu.Item onClick={() => onRestoreProject?.(project.id)}>Restore</Menu.Item>
+                    )}
                   </Menu>
                 }
               >
@@ -115,7 +149,9 @@ const ProjectCard = ({ project }) => {
                 <ProjectStateChip state={project.state} projectId={project.id} interactive={false} />
               </div>
             )}
+            {project.archived_at && <div className={cn("project-card").elem("archived-badge").toClassName()}>Archived</div>}
           </div>
+          {topicLabel && <div className={cn("project-card").elem("topic-chip").toClassName()}>{topicLabel}</div>}
           <div className={cn("project-card").elem("summary").toClassName()}>
             <div className={cn("project-card").elem("annotation").toClassName()}>
               <div className={cn("project-card").elem("total").toClassName()}>

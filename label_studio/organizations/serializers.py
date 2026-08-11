@@ -4,7 +4,7 @@ from typing import TypedDict
 
 from drf_dynamic_fields import DynamicFieldsMixin
 from drf_spectacular.utils import extend_schema_serializer
-from organizations.models import Organization, OrganizationMember
+from organizations.models import InvitePreset, Organization, OrganizationMember
 from projects.models import Project
 from rest_framework import serializers
 from tasks.models import Annotation
@@ -72,7 +72,7 @@ class OrganizationMemberListSerializer(DynamicFieldsMixin, serializers.ModelSeri
 
     class Meta:
         model = OrganizationMember
-        fields = ['id', 'organization', 'user', 'created_projects', 'contributed_to_projects']
+        fields = ['id', 'organization', 'user', 'role', 'created_projects', 'contributed_to_projects']
 
     def get_created_projects(self, member) -> list[ProjectInfo] | None:
         if not self.context.get('contributed_to_projects', False):
@@ -138,6 +138,7 @@ class OrganizationMemberSerializer(DynamicFieldsMixin, serializers.ModelSerializ
         fields = [
             'user',
             'organization',
+            'role',
             'contributed_projects_count',
             'annotations_count',
             'created_at',
@@ -146,9 +147,60 @@ class OrganizationMemberSerializer(DynamicFieldsMixin, serializers.ModelSerializ
         ]
 
 
+class OrganizationMemberRoleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = OrganizationMember
+        fields = ['role']
+
+
 # =========================================
 
 
 class OrganizationInviteSerializer(serializers.Serializer):
     token = serializers.CharField(required=False)
     invite_url = serializers.CharField(required=False)
+
+
+class InvitePresetSerializer(serializers.ModelSerializer):
+    invite_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = InvitePreset
+        fields = [
+            'id',
+            'organization',
+            'token',
+            'default_role',
+            'team_ids',
+            'workspace_ids',
+            'expires_at',
+            'max_uses',
+            'uses_count',
+            'is_active',
+            'created_at',
+            'updated_at',
+            'invite_url',
+        ]
+        read_only_fields = ['id', 'organization', 'token', 'uses_count', 'created_at', 'updated_at', 'invite_url']
+
+    def get_invite_url(self, instance):
+        from django.conf import settings
+        from django.urls import reverse
+
+        invite_url = '{}?token={}'.format(reverse('user-signup'), instance.token)
+        if hasattr(settings, 'FORCE_SCRIPT_NAME') and settings.FORCE_SCRIPT_NAME:
+            invite_url = invite_url.replace(settings.FORCE_SCRIPT_NAME, '', 1)
+        return invite_url
+
+
+class InvitePresetCreateSerializer(serializers.Serializer):
+    default_role = serializers.ChoiceField(choices=OrganizationMember.Roles.choices, required=False)
+    team_ids = serializers.ListField(child=serializers.IntegerField(min_value=1), required=False)
+    workspace_ids = serializers.ListField(child=serializers.IntegerField(min_value=1), required=False)
+    expires_at = serializers.DateTimeField(required=False, allow_null=True)
+    max_uses = serializers.IntegerField(required=False, allow_null=True, min_value=1)
+
+    def validate_default_role(self, value):
+        if value == OrganizationMember.Roles.OWNER:
+            raise serializers.ValidationError('Scoped invite links cannot assign OWNER role.')
+        return value

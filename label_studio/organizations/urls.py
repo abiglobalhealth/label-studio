@@ -25,11 +25,18 @@ _api_urlpattens = [
         api.OrganizationMemberDetailAPI.as_view(),
         name='organization-membership-detail',
     ),
+    path(
+        '<int:pk>/memberships/<int:user_pk>/role',
+        api.OrganizationMemberRoleUpdateAPI.as_view(),
+        name='organization-membership-role-update',
+    ),
 ]
 # TODO: these urlpatterns should be moved in core/urls with include('organizations.urls')
 urlpatterns = [
     path('organization/', views.simple_view, name='organization-simple'),
     path('organization/webhooks', views.simple_view, name='organization-simple-webhooks'),
+    path('organization/workspaces', views.simple_view, name='organization-simple-workspaces'),
+    path('organization/<path:subpath>', views.simple_view, name='organization-simple-subpath'),
     path('people/', include(_urlpatterns)),
     # TODO: temporary route, remove as needed
     path('models/', views.simple_view, name='models'),
@@ -37,4 +44,5 @@ urlpatterns = [
     # invite
     path('api/invite', api.OrganizationInviteAPI.as_view(), name='organization-invite'),
     path('api/invite/reset-token', api.OrganizationResetTokenAPI.as_view(), name='organization-reset-token'),
+    path('api/invite/links', api.OrganizationInvitePresetListCreateAPI.as_view(), name='organization-invite-links'),
 ]

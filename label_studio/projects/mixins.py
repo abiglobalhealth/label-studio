@@ -76,6 +76,15 @@ class ProjectMixin:
         Dummy stub for has_permission
         """
         user.project = self  # link for activity log
+        from core.current_request import get_current_request
+
+        request = get_current_request()
+        request_method = getattr(request, 'method', None)
+        if request_method is not None:
+            from core.rbac import can_mutate_project
+
+            if not can_mutate_project(user, self, request_method):
+                return False
         return True
 
     def _can_use_overlap(self):

@@ -73,9 +73,13 @@ export const FormField = forwardRef(
         /**@type {HTMLInputElement|HTMLTextAreaElement} */
         const input = field.current;
 
+        // Keep custom controlled fields (for example Select) in sync with the
+        // native field value that Form.serialize reads on submit.
         if (setValue instanceof Function) {
           setValue(value);
-        } else if (input.type === "checkbox" || input.type === "radio") {
+        }
+
+        if (input.type === "checkbox" || input.type === "radio") {
           input.checked = value ?? input.checked;
         } else if (value === null) {
           input.value = "";
