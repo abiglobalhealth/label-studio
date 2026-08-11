@@ -4,6 +4,8 @@ from django.contrib.auth import get_user_model
 from django.http import JsonResponse
 from rest_framework import status
 
+from jwt_auth.models import LSAPIToken
+
 logger = logging.getLogger(__name__)
 
 User = get_user_model()
@@ -31,9 +33,20 @@ class JWTAuthenticationMiddleware:
             return self.get_response(request)
 
         try:
-            user_and_token = JWTAuthentication().authenticate(request)
-            if user_and_token:
-                user = User.objects.get(pk=user_and_token[0].pk)
+            try:
+                # Regular access JWTs are handled by Simple JWT.
+                user_and_token = JWTAuthentication().authenticate(request)
+                user = User.objects.get(pk=user_and_token[0].pk) if user_and_token else None
+            except (AuthenticationFailed, InvalidToken, TokenError):
+                # Personal API tokens are LSAPIToken refresh JWTs. They are
+                # intentionally returned in full only when created, and must
+                # also be accepted as Bearer credentials for API requests.
+                raw_token = request.META['HTTP_AUTHORIZATION'].split()[1]
+                token = LSAPIToken(raw_token)
+                token.check_blacklist()
+                user = User.objects.get(pk=token['user_id'])
+
+            if user:
                 JWT_ACCESS_TOKEN_ENABLED = flag_set(
                     'fflag__feature_develop__prompts__dia_1829_jwt_token_auth', user=user
                 )

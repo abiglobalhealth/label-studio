@@ -153,6 +153,10 @@ export const WorkspacesPage = () => {
                 Delete
               </Button>
             </div>
+            <div className={cn("workspaces-page").elem("section").toClassName()}>
+              <h4>Workspace ID</h4>
+              <p>{selectedWorkspace.id}</p>
+            </div>
 
             <div className={cn("workspaces-page").elem("section").toClassName()}>
               <h4>Users with access</h4>

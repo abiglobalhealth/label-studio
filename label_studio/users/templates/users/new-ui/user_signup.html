@@ -57,7 +57,7 @@
         <input class="lsf-input-ls" name="elaborate" id="elaborate" {% if user_form.data.how_find_us == elaborate %}value="{{ user_form.data.elaborate }}"{% endif %}>
         </select>
       </div>
-      <div class="form-group">
+      <!-- <div class="form-group">
         <input name="allow_newsletters" id="allow_newsletters" type="hidden" value="{% if user_form.data.allow_newsletters == 'false' %}false{% else %}true{% endif %}">
         <input name="allow_newsletters_visual" id="allow_newsletters_visual" class="lsf-checkbox-ls"
                 type="checkbox" style="width: auto" {% if user_form.data.allow_newsletters == 'false' %}{% else %}checked="checked{% endif %}"
@@ -67,7 +67,7 @@
           <img src="{{ settings.HOSTNAME }}{% static 'images/heidi.png' %}" alt="Heidi"
               width="25" style="position: absolute; right: -2.5em; top: -.25rem;">
         </label>
-      </div>
+      </div> -->
 
       {% if form.non_field_errors %}
         {% for error in form.non_field_errors %}
