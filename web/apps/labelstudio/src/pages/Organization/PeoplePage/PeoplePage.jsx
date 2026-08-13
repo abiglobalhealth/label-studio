@@ -14,22 +14,31 @@ import { IconPlus } from "@humansignal/icons";
 import { useToast } from "@humansignal/ui";
 import { InviteLink } from "./InviteLink";
 import { SelectedUser } from "./SelectedUser";
+import { useAuth } from "@humansignal/core/providers/AuthProvider";
+import { hasPermission } from "../../../utils/permissions";
 
 export const PeoplePage = () => {
   const apiSettingsModal = useRef();
+  const { user } = useAuth();
   const toast = useToast();
-  const [selectedUser, setSelectedUser] = useState(null);
+  const [selectedMembership, setSelectedMembership] = useState(null);
+  const [membersReloadToken, setMembersReloadToken] = useState(0);
   const [invitationOpen, setInvitationOpen] = useState(false);
+  const canInvite = hasPermission(user, "organizations.members.invite");
 
   useUpdatePageTitle("People");
 
   const selectUser = useCallback(
-    (user) => {
-      setSelectedUser(user);
+    (membership) => {
+      setSelectedMembership(membership);
 
-      localStorage.setItem("selectedUser", user?.id);
+      if (membership?.user?.id) {
+        localStorage.setItem("selectedUser", membership.user.id);
+      } else {
+        localStorage.removeItem("selectedUser");
+      }
     },
-    [setSelectedUser],
+    [setSelectedMembership],
   );
 
   const apiTokensSettingsModalProps = useMemo(
@@ -73,6 +82,7 @@ export const PeoplePage = () => {
               leading={<IconPlus className="!h-4" />}
               onClick={() => setInvitationOpen(true)}
               aria-label="Invite new member"
+              disabled={!canInvite}
             >
               Add Members
             </Button>
@@ -81,13 +91,21 @@ export const PeoplePage = () => {
       </div>
       <div className={cn("people").elem("content").toClassName()}>
         <PeopleList
-          selectedUser={selectedUser}
+          selectedUser={selectedMembership?.user}
           defaultSelected={defaultSelected}
-          onSelect={(user) => selectUser(user)}
+          onSelect={selectUser}
+          reloadToken={membersReloadToken}
         />
 
-        {selectedUser ? (
-          <SelectedUser user={selectedUser} onClose={() => selectUser(null)} />
+        {selectedMembership ? (
+          <SelectedUser
+            membership={selectedMembership}
+            onClose={() => selectUser(null)}
+            onRoleChanged={(membership) => {
+              selectUser(membership);
+              setMembersReloadToken((token) => token + 1);
+            }}
+          />
         ) : (
           isFF(FF_LSDV_E_297) && <HeidiTips collection="organizationPage" />
         )}

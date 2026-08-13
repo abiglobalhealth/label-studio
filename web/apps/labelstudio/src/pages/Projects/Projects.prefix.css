@@ -19,6 +19,14 @@
     grid-template-columns: repeat(4, 1fr);
   }
 
+  &__filters {
+    display: grid;
+    grid-template-columns: 220px 260px 260px max-content;
+    gap: 12px;
+    padding: 16px 40px 0;
+    align-items: center;
+  }
+
   &__link {
     color: var(--color-neutral-content);
     display: block;
@@ -154,10 +162,33 @@
     white-space: nowrap;
   }
 
+  &__archived-badge {
+    margin-left: auto;
+    font-size: 12px;
+    line-height: 20px;
+    color: var(--color-warning-content);
+    border: 1px solid var(--color-warning-border);
+    border-radius: 999px;
+    padding: 0 8px;
+  }
+
   &__summary {
     flex: 1;
     font-size: 14px;
     line-height: 22px;
+  }
+
+  &__topic-chip {
+    width: fit-content;
+    margin-top: 8px;
+    margin-bottom: 4px;
+    border-radius: 999px;
+    border: 1px solid var(--color-primary-border);
+    color: var(--color-primary-content);
+    background: var(--color-primary-surface-subtle);
+    padding: 2px 8px;
+    font-size: 12px;
+    line-height: 18px;
   }
 
   &__annotation {

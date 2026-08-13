@@ -26,6 +26,8 @@ declare type APIProject = {
   /** Show annotation history to annotator */
   show_annotation_history?: boolean;
   organization?: number | null;
+  workspace?: number | null;
+  topic?: number | null;
   color?: string | null;
 
   /** Maximum number of annotations for one task. If the number of annotations per task is equal or greater to this value, the task is completed (is_labeled=True) */

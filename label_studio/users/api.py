@@ -170,7 +170,7 @@ _user_schema = {
 class UserAPI(viewsets.ModelViewSet):
     serializer_class = UserSerializer
     permission_required = ViewClassPermission(
-        GET=all_permissions.organizations_change,
+        GET=all_permissions.organizations_view,
         PUT=all_permissions.organizations_change,
         POST=all_permissions.organizations_change,
         PATCH=all_permissions.organizations_view,
@@ -182,7 +182,7 @@ class UserAPI(viewsets.ModelViewSet):
         return User.objects.filter(organizations=self.request.user.active_organization)
 
     @extend_schema(exclude=True)
-    @action(detail=True, methods=['delete', 'post'], permission_required=all_permissions.avatar_any)
+    @action(detail=True, methods=['delete', 'post'], permission_classes=[IsAuthenticated])
     def avatar(self, request, pk):
         if request.method == 'POST':
             avatar = check_avatar(request.FILES)

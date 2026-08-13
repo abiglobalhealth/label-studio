@@ -11,10 +11,16 @@ export const API_CONFIG = {
     updateHotkeys: "PATCH:/current-user/hotkeys/",
 
     // Organization
+    organizations: "/organizations",
+    organization: "/organizations/:pk",
+    updateOrganization: "PATCH:/organizations/:pk",
     memberships: "/organizations/:pk/memberships",
     userMemberships: "/organizations/:pk/memberships/:userPk",
+    updateUserMembershipRole: "PATCH:/organizations/:pk/memberships/:userPk/role",
     inviteLink: "/invite",
     resetInviteLink: "POST:/invite/reset-token",
+    inviteLinks: "/invite/links",
+    createInviteLink: "POST:/invite/links",
 
     // Project
     projects: "/projects",
@@ -22,7 +28,41 @@ export const API_CONFIG = {
     updateProject: "PATCH:/projects/:pk",
     createProject: "POST:/projects",
     deleteProject: "DELETE:/projects/:pk",
+    archiveProject: "POST:/projects/:pk/archive",
+    restoreProject: "POST:/projects/:pk/restore",
     projectResetCache: "POST:/projects/:pk/summary/reset",
+
+    // Workspaces
+    workspaces: "/workspaces",
+    workspace: "/workspaces/:pk",
+    createWorkspace: "POST:/workspaces",
+    updateWorkspace: "PATCH:/workspaces/:pk",
+    deleteWorkspace: "DELETE:/workspaces/:pk",
+
+    teams: "/teams",
+    team: "/teams/:pk",
+    createTeam: "POST:/teams",
+    updateTeam: "PATCH:/teams/:pk",
+    deleteTeam: "DELETE:/teams/:pk",
+    teamMembers: "/teams/members",
+    createTeamMember: "POST:/teams/members",
+    deleteTeamMember: "DELETE:/teams/members/:pk",
+    teamManagers: "/teams/managers",
+    createTeamManager: "POST:/teams/managers",
+    deleteTeamManager: "DELETE:/teams/managers/:pk",
+
+    topics: "/topics",
+    topic: "/topics/:pk",
+    createTopic: "POST:/topics",
+    updateTopic: "PATCH:/topics/:pk",
+    deleteTopic: "DELETE:/topics/:pk",
+
+    workspaceUserAssignments: "/workspaces/users",
+    createWorkspaceUserAssignment: "POST:/workspaces/users",
+    deleteWorkspaceUserAssignment: "DELETE:/workspaces/users/:pk",
+    workspaceTeamAssignments: "/workspaces/teams",
+    createWorkspaceTeamAssignment: "POST:/workspaces/teams",
+    deleteWorkspaceTeamAssignment: "DELETE:/workspaces/teams/:pk",
 
     // Presigning
     presignUrlForTask: "/../tasks/:taskID/presign",

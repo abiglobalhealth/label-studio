@@ -28,6 +28,7 @@ from core.utils.common import (
     merge_labels_counters,
 )
 from core.utils.db import batch_update_with_retry, fast_first, has_column_cached
+from core.rbac import project_visibility_q
 from django.conf import settings
 from django.contrib.postgres.search import SearchVectorField
 from django.core.validators import MaxLengthValidator, MinLengthValidator
@@ -111,7 +112,13 @@ class ProjectManager(models.Manager):
         return ProjectQuerySetWithFSM(self.model, using=self._db)
 
     def for_user(self, user):
-        return self.get_queryset().filter(organization=user.active_organization)
+        queryset = self.get_queryset().filter(organization=user.active_organization)
+        if getattr(user, 'is_superuser', False):
+            return queryset
+        visibility_q = project_visibility_q(user)
+        if not visibility_q.children:
+            return queryset
+        return queryset.filter(visibility_q).distinct()
 
     def with_state(self):
         """
@@ -145,13 +152,15 @@ class ProjectManager(models.Manager):
 
 
 class ProjectVisibleManager(ProjectManager):
-    """Default manager that hides soft-deleted projects (deleted_at IS NULL)."""
+    """Default manager that hides soft-deleted and archived projects."""
 
     def get_queryset(self):
         qs = super().get_queryset()
         # Avoid referencing columns that might not exist during early migrations
         if has_column_cached(self.model._meta.db_table, 'deleted_at'):
-            return qs.filter(deleted_at__isnull=True)
+            qs = qs.filter(deleted_at__isnull=True)
+        if has_column_cached(self.model._meta.db_table, 'archived_at'):
+            qs = qs.filter(archived_at__isnull=True)
         return qs
 
 
@@ -194,6 +203,20 @@ class Project(ProjectMixin, FsmHistoryStateModel):
 
     organization = models.ForeignKey(
         'organizations.Organization', on_delete=models.CASCADE, related_name='projects', null=True
+    )
+    workspace = models.ForeignKey(
+        'workspaces.Workspace',
+        on_delete=models.SET_NULL,
+        related_name='projects',
+        null=True,
+        blank=True,
+    )
+    topic = models.ForeignKey(
+        'workspaces.Topic',
+        on_delete=models.SET_NULL,
+        related_name='projects',
+        null=True,
+        blank=True,
     )
     label_config = models.TextField(
         _('label config'),
@@ -360,6 +383,16 @@ class Project(ProjectMixin, FsmHistoryStateModel):
         blank=True,
         db_index=False,
         verbose_name=_('deleted by'),
+    )
+    archived_at = models.DateTimeField(_('archived at'), null=True, blank=True)
+    archived_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name='archived_projects',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        db_index=False,
+        verbose_name=_('archived by'),
     )
     purge_at = models.DateTimeField(_('purge at'), null=True, blank=True)
 

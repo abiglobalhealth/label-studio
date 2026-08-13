@@ -231,6 +231,7 @@ INSTALLED_APPS = [
     'core',
     'users',
     'organizations',
+    'workspaces',
     'data_import',
     'data_export',
     'projects',
@@ -273,6 +274,7 @@ REST_FRAMEWORK = {
     ),
     'DEFAULT_PERMISSION_CLASSES': [
         'core.api_permissions.HasObjectPermission',
+        'core.api_permissions.RoleBasedPermission',
         'rest_framework.permissions.IsAuthenticated',
     ],
     'EXCEPTION_HANDLER': 'core.utils.common.custom_exception_handler',

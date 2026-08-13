@@ -12,6 +12,7 @@ from django.core.files.images import get_image_dimensions
 from django.shortcuts import redirect
 from django.urls import reverse
 from organizations.models import Organization
+from organizations.models import OrganizationMember
 
 
 def hash_upload(instance, filename):
@@ -61,11 +62,42 @@ def save_user(request, next_page, user_form):
     user.username = user.email.split('@')[0]
     user.save()
 
-    if Organization.objects.exists():
+    invite_organization = getattr(request, 'invite_organization', None)
+    invite_preset = getattr(request, 'invite_preset', None)
+
+    if invite_organization is not None:
+        org = invite_organization
+        org.add_user(user)
+    elif Organization.objects.exists():
         org = Organization.objects.first()
         org.add_user(user)
     else:
         org = Organization.create_organization(created_by=user, title='Label Studio')
+
+    membership = OrganizationMember.objects.filter(
+        user=user,
+        organization=org,
+        deleted_at__isnull=True,
+    ).first()
+
+    if membership is not None and invite_preset is not None:
+        membership.role = invite_preset.default_role
+        membership.save(update_fields=['role'])
+
+        from workspaces.models import TeamMember, WorkspaceUserAssignment
+
+        if invite_preset.team_ids:
+            valid_team_ids = set(org.teams.filter(id__in=invite_preset.team_ids).values_list('id', flat=True))
+            for team_id in valid_team_ids:
+                TeamMember.objects.get_or_create(team_id=team_id, user=user)
+
+        if invite_preset.workspace_ids:
+            valid_workspace_ids = set(org.workspaces.filter(id__in=invite_preset.workspace_ids).values_list('id', flat=True))
+            for workspace_id in valid_workspace_ids:
+                WorkspaceUserAssignment.objects.get_or_create(workspace_id=workspace_id, user=user)
+
+        invite_preset.consume()
+
     user.active_organization = org
     user.save(update_fields=['active_organization'])
 

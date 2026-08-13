@@ -21,7 +21,7 @@ from django.apps import apps
 from django.conf import settings
 from django.test import Client
 from ml.models import MLBackend
-from organizations.models import Organization
+from organizations.models import Organization, OrganizationMember
 from projects.models import Project
 from tasks.serializers import TaskWithAnnotationsSerializer
 from users.models import User
@@ -406,16 +406,22 @@ def make_annotator(config, project, login=False, client=None):
 
     create_business(user)
 
-    if login:
-        Organization.create_organization(created_by=user, title=user.first_name)
+    OrganizationMember.objects.update_or_create(
+        user=user,
+        organization=project.organization,
+        defaults={'role': OrganizationMember.Roles.ANNOTATOR},
+    )
+    user.active_organization = project.organization
+    user.save(update_fields=['active_organization'])
 
+    project.add_collaborator(user)
+
+    if login:
         if client is None:
             client = Client()
         signin_status_code = signin(client, config['email'], '12345').status_code
         assert signin_status_code == 302, f'Sign-in status code: {signin_status_code}'
 
-    project.add_collaborator(user)
-    if login:
         client.annotator = user
         return client
     return user
@@ -424,8 +430,15 @@ def make_annotator(config, project, login=False, client=None):
 def invite_client_to_project(client, project):
     if apps.is_installed('annotators'):
         return client.get(f'/annotator/invites/{project.token}/')
-    else:
-        return SimpleNamespace(status_code=200)
+
+    OrganizationMember.objects.update_or_create(
+        user=client.user,
+        organization=project.organization,
+        defaults={'role': OrganizationMember.Roles.ANNOTATOR},
+    )
+    client.user.active_organization = project.organization
+    client.user.save(update_fields=['active_organization'])
+    return SimpleNamespace(status_code=200)
 
 
 def login(client, email, password):

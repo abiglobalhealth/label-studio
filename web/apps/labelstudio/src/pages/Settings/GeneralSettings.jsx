@@ -1,5 +1,5 @@
-import { Badge, Button, Select, Typography, Tooltip, EnterpriseBadge } from "@humansignal/ui";
-import { useCallback, useContext } from "react";
+import { Badge, Button, Select, Typography, Tooltip } from "@humansignal/ui";
+import { useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { IconSpark } from "@humansignal/icons";
 import { Form, Input, TextArea } from "../../components/Form";
 import { RadioGroup } from "../../components/Form/Elements/RadioGroup/RadioGroup";
@@ -8,9 +8,19 @@ import { cn } from "../../utils/bem";
 import { HeidiTips } from "../../components/HeidiTips/HeidiTips";
 import { FF_LSDV_E_297, isFF } from "../../utils/feature-flags";
 import { createURL } from "../../components/HeidiTips/utils";
+import { useAPI } from "../../providers/ApiProvider";
+import { useAuth } from "@humansignal/core/providers/AuthProvider";
+import { hasPermission } from "../../utils/permissions";
 
 export const GeneralSettings = () => {
+  const api = useAPI();
+  const { user } = useAuth();
   const { project, fetchProject } = useContext(ProjectContext);
+  const [workspaces, setWorkspaces] = useState([]);
+  const [topics, setTopics] = useState([]);
+  const [selectedTopicId, setSelectedTopicId] = useState("");
+  const canUpdateProject = hasPermission(user, "projects.change");
+  const topicId = typeof project.topic === "object" ? project.topic?.id : project.topic;
 
   const updateProject = useCallback(() => {
     if (project.id) fetchProject(project.id, true);
@@ -23,42 +33,81 @@ export const GeneralSettings = () => {
     { value: "Uniform", label: "Random", description: "Tasks are chosen with uniform random" },
   ];
 
+  const workspaceOptions = useMemo(() => {
+    return workspaces.map((workspace) => ({ value: workspace.id, label: workspace.title }));
+  }, [workspaces]);
+
+  const topicOptions = useMemo(() => {
+    return topics.map((topic) => ({ value: String(topic.id), label: topic.title }));
+  }, [topics]);
+
+  useEffect(() => {
+    Promise.all([api.callApi("workspaces"), api.callApi("topics")]).then(([workspaceResponse, topicResponse]) => {
+      setWorkspaces(workspaceResponse.results ?? workspaceResponse ?? []);
+      setTopics(topicResponse.results ?? topicResponse ?? []);
+    });
+  }, [api]);
+
+  useEffect(() => {
+    setSelectedTopicId(topicId ? String(topicId) : "");
+  }, [topicId]);
+
   return (
     <div className={cn("general-settings").toClassName()}>
       <div className={cn("general-settings").elem("wrapper").toClassName()}>
         <h1>General Settings</h1>
         <div className={cn("settings-wrapper").toClassName()}>
-          <Form action="updateProject" formData={{ ...project }} params={{ pk: project.id }} onSubmit={updateProject}>
+          <Form
+            action="updateProject"
+            formData={{ ...project }}
+            params={{ pk: project.id }}
+            prepareData={(data) => ({ ...data, topic: selectedTopicId || null })}
+            onSubmit={updateProject}
+          >
             <Form.Row columnCount={1} rowGap="16px">
               <Input name="title" label="Project Name" />
 
               <TextArea name="description" label="Description" style={{ minHeight: 128 }} />
-              {isFF(FF_LSDV_E_297) && (
-                <div className={cn("workspace-placeholder").toClassName()}>
-                  <div className={cn("workspace-placeholder").elem("badge-wrapper").toClassName()}>
-                    <div className={cn("workspace-placeholder").elem("title").toClassName()}>Workspace</div>
-                    <EnterpriseBadge size="small" className="ml-2" />
-                  </div>
-                  <Select placeholder="Select an option" disabled options={[]} />
-                  <Typography size="small" className="my-tight">
-                    Simplify project management by organizing projects into workspaces.{" "}
-                    <a
-                      target="_blank"
-                      href={createURL(
-                        "https://docs.humansignal.com/guide/manage_projects#Create-workspaces-to-organize-projects",
-                        {
-                          experiment: "project_settings_tip",
-                          treatment: "simplify_project_management",
-                        },
-                      )}
-                      rel="noreferrer"
-                      className="underline hover:no-underline"
-                    >
-                      Learn more
-                    </a>
-                  </Typography>
+              <div className={cn("workspace-placeholder").toClassName()}>
+                <div className={cn("workspace-placeholder").elem("badge-wrapper").toClassName()}>
+                  <div className={cn("workspace-placeholder").elem("title").toClassName()}>Workspace</div>
                 </div>
-              )}
+                <Select
+                  name="workspace"
+                  placeholder="Select workspace"
+                  options={workspaceOptions}
+                  disabled={!canUpdateProject}
+                  value={project.workspace ?? undefined}
+                />
+                <Typography size="small" className="my-tight">
+                  Simplify project management by organizing projects into workspaces.{" "}
+                  <a
+                    target="_blank"
+                    href={createURL("https://docs.humansignal.com/guide/manage_projects#Create-workspaces-to-organize-projects", {
+                      experiment: "project_settings_tip",
+                      treatment: "simplify_project_management",
+                    })}
+                    rel="noreferrer"
+                    className="underline hover:no-underline"
+                  >
+                    Learn more
+                  </a>
+                </Typography>
+              </div>
+
+              <div className={cn("workspace-placeholder").toClassName()}>
+                <div className={cn("workspace-placeholder").elem("badge-wrapper").toClassName()}>
+                  <div className={cn("workspace-placeholder").elem("title").toClassName()}>Topic</div>
+                </div>
+                <Select
+                  name="topic"
+                  placeholder="Select topic"
+                  options={topicOptions}
+                  disabled={!canUpdateProject}
+                  value={selectedTopicId}
+                  onChange={setSelectedTopicId}
+                />
+              </div>
               <RadioGroup name="color" label="Color" size="large" labelProps={{ size: "large" }}>
                 {colors.map((color) => (
                   <RadioGroup.Button key={color} value={color}>

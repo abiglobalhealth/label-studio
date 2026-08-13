@@ -1,4 +1,4 @@
-import { EnterpriseBadge, Select, Typography } from "@humansignal/ui";
+import { Select, Typography } from "@humansignal/ui";
 import React from "react";
 import { useHistory } from "react-router";
 import { ToggleItems } from "../../components";
@@ -14,10 +14,24 @@ import { ImportPage } from "./Import/Import";
 import { useImportPage } from "./Import/useImportPage";
 import { useDraftProject } from "./utils/useDraftProject";
 import { Input, TextArea } from "../../components/Form";
-import { FF_LSDV_E_297, isFF } from "../../utils/feature-flags";
 import { createURL } from "../../components/HeidiTips/utils";
 
-const ProjectName = ({ name, setName, onSaveName, onSubmit, error, description, setDescription, show = true }) =>
+const ProjectName = ({
+  name,
+  setName,
+  onSaveName,
+  onSubmit,
+  error,
+  description,
+  setDescription,
+  show = true,
+  workspaceId,
+  setWorkspaceId,
+  workspaceOptions,
+  topicId,
+  setTopicId,
+  topicOptions,
+}) =>
   !show ? null : (
     <form
       className={cn("project-name").toClassName()}
@@ -55,33 +69,42 @@ const ProjectName = ({ name, setName, onSaveName, onSubmit, error, description, 
           className="project-description w-full"
         />
       </div>
-      {isFF(FF_LSDV_E_297) && (
-        <div className="w-full flex flex-col gap-2">
-          <label>
-            Workspace
-            <EnterpriseBadge className="ml-tight" />
-          </label>
-          <Select placeholder="Select an option" disabled options={[]} triggerClassName="!flex-1" />
-          <Typography size="small" className="mt-tight mb-wider">
-            Simplify project management by organizing projects into workspaces.{" "}
-            <a
-              href={createURL(
-                "https://docs.humansignal.com/guide/manage_projects#Create-workspaces-to-organize-projects",
-                {
-                  experiment: "project_creation_dropdown",
-                  treatment: "simplify_project_management",
-                },
-              )}
-              target="_blank"
-              rel="noreferrer"
-              className="underline hover:no-underline"
-            >
-              Learn more
-            </a>
-          </Typography>
-          <HeidiTips collection="projectCreation" />
-        </div>
-      )}
+      <div className="w-full flex flex-col gap-2">
+        <label>Workspace</label>
+        <Select
+          value={workspaceId}
+          onChange={(value) => setWorkspaceId(value || undefined)}
+          placeholder="Select workspace"
+          options={workspaceOptions}
+          triggerClassName="!flex-1"
+        />
+        <Typography size="small" className="mt-tight mb-wider">
+          Simplify project management by organizing projects into workspaces.{" "}
+          <a
+            href={createURL("https://docs.humansignal.com/guide/manage_projects#Create-workspaces-to-organize-projects", {
+              experiment: "project_creation_dropdown",
+              treatment: "simplify_project_management",
+            })}
+            target="_blank"
+            rel="noreferrer"
+            className="underline hover:no-underline"
+          >
+            Learn more
+          </a>
+        </Typography>
+        <HeidiTips collection="projectCreation" />
+      </div>
+
+      <div className="w-full flex flex-col gap-2">
+        <label>Topic</label>
+        <Select
+          value={topicId}
+          onChange={(value) => setTopicId(value || undefined)}
+          placeholder="Select topic"
+          options={topicOptions}
+          triggerClassName="!flex-1"
+        />
+      </div>
     </form>
   );
 
@@ -97,6 +120,10 @@ export const CreateProject = ({ onClose }) => {
   const [error, setError] = React.useState();
   const [description, setDescription] = React.useState("");
   const [sample, setSample] = React.useState(null);
+  const [workspaceId, setWorkspaceId] = React.useState();
+  const [workspaceOptions, setWorkspaceOptions] = React.useState([]);
+  const [topicId, setTopicId] = React.useState();
+  const [topicOptions, setTopicOptions] = React.useState([]);
 
   const setStep = React.useCallback((step) => {
     _setStep(step);
@@ -133,9 +160,31 @@ export const CreateProject = ({ onClose }) => {
       title: name,
       description,
       label_config: project?.label_config ?? "<View></View>",
+      workspace: workspaceId,
+      topic: topicId,
     }),
-    [name, description, project?.label_config],
+    [name, description, project?.label_config, workspaceId, topicId],
   );
+
+  React.useEffect(() => {
+    Promise.all([api.callApi("workspaces"), api.callApi("topics")]).then(([workspaceResponse, topicResponse]) => {
+      const workspaces = workspaceResponse?.results ?? workspaceResponse ?? [];
+      const topics = topicResponse?.results ?? topicResponse ?? [];
+
+      setWorkspaceOptions(workspaces.map((workspace) => ({ value: workspace.id, label: workspace.title })));
+      setTopicOptions(topics.map((topic) => ({ value: String(topic.id), label: topic.title })));
+    });
+  }, [api]);
+
+  React.useEffect(() => {
+    if (!project) return;
+    if (project.workspace && workspaceId === undefined) {
+      setWorkspaceId(project.workspace);
+    }
+    if (project.topic && topicId === undefined) {
+      setTopicId(String(typeof project.topic === "object" ? project.topic.id : project.topic));
+    }
+  }, [project, workspaceId, topicId]);
 
   const onCreate = React.useCallback(async () => {
     // First, persist project with label_config so import/reimport validates against it
@@ -232,6 +281,12 @@ export const CreateProject = ({ onClose }) => {
           onSubmit={onCreate}
           description={description}
           setDescription={setDescription}
+          workspaceId={workspaceId}
+          setWorkspaceId={setWorkspaceId}
+          workspaceOptions={workspaceOptions}
+          topicId={topicId}
+          setTopicId={setTopicId}
+          topicOptions={topicOptions}
           show={step === "name"}
         />
         <ImportPage

@@ -1,8 +1,10 @@
 """This file and its contents are licensed under the Apache License 2.0. Please see the included NOTICE for copyright information and LICENSE for a copy of the license."""
 
 from core.permissions import all_permissions
+from core.rbac import has_permission
 from core.utils.common import load_func
 from django.conf import settings
+from organizations.models import OrganizationMember
 from rest_flex_fields import FlexFieldsModelSerializer
 from rest_framework import serializers
 from users.models import User
@@ -13,6 +15,7 @@ class BaseUserSerializer(FlexFieldsModelSerializer):
     initials = serializers.SerializerMethodField(default='?', read_only=True)
     avatar = serializers.SerializerMethodField(read_only=True)
     active_organization_meta = serializers.SerializerMethodField(read_only=True)
+    active_organization_role = serializers.SerializerMethodField(read_only=True)
     last_activity = serializers.DateTimeField(read_only=True, source='last_activity_cached')
 
     def get_avatar(self, instance):
@@ -59,6 +62,22 @@ class BaseUserSerializer(FlexFieldsModelSerializer):
             return True
         return bool(organization_member_for_user.deleted_at)
 
+    def get_active_organization_role(self, instance):
+        org_id = instance.active_organization_id
+        if not org_id:
+            return None
+
+        membership = (
+            OrganizationMember.objects.filter(
+                user=instance,
+                organization_id=org_id,
+                deleted_at__isnull=True,
+            )
+            .only('role')
+            .first()
+        )
+        return membership.role if membership else None
+
     def to_representation(self, instance):
         """Returns user with cache, this helps to avoid multiple s3/gcs links resolving for avatars"""
 
@@ -91,6 +110,7 @@ class BaseUserSerializer(FlexFieldsModelSerializer):
             'phone',
             'active_organization',
             'active_organization_meta',
+            'active_organization_role',
             'allow_newsletters',
             'date_joined',
         )
@@ -108,7 +128,7 @@ class BaseWhoAmIUserSerializer(BaseUserSerializer):
         fields = BaseUserSerializer.Meta.fields + ('permissions',)
 
     def get_permissions(self, user) -> list[str]:
-        return [perm for _, perm in all_permissions]
+        return [perm for _, perm in all_permissions if has_permission(user, perm)]
 
 
 class UserSimpleSerializer(BaseUserSerializer):

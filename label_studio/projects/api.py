@@ -9,6 +9,7 @@ from core.filters import ListFilter
 from core.label_config import config_essential_data_has_changed
 from core.mixins import GetParentObjectMixin
 from core.permissions import ViewClassPermission, all_permissions
+from core.rbac import can_manage_workspace, project_visibility_q
 from core.redis import start_job_async_or_sync
 from core.utils.common import paginator, paginator_help, temporary_disconnect_all_signals
 from core.utils.exceptions import LabelStudioDatabaseException, ProjectExistException
@@ -20,6 +21,7 @@ from django.conf import settings
 from django.db import IntegrityError
 from django.db.models import F
 from django.http import Http404
+from django.utils import timezone
 from django.utils.decorators import method_decorator
 from django_filters import CharFilter, FilterSet
 from django_filters.rest_framework import DjangoFilterBackend
@@ -43,8 +45,9 @@ from projects.serializers import (
     ProjectSummarySerializer,
 )
 from rest_framework import filters, generics, status
-from rest_framework.exceptions import NotFound
+from rest_framework.exceptions import NotFound, PermissionDenied
 from rest_framework.exceptions import ValidationError as RestValidationError
+from rest_framework.generics import get_object_or_404
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import AllowAny
@@ -62,6 +65,7 @@ from users.models import User
 from users.serializers import UserSimpleSerializer
 from webhooks.models import WebhookAction
 from webhooks.utils import api_webhook, api_webhook_for_delete, emit_webhooks_for_instance
+from workspaces.models import Workspace
 
 from label_studio.core.utils.common import load_func
 
@@ -107,6 +111,8 @@ class ProjectListPagination(PageNumberPagination):
 class ProjectFilterSet(FilterSet):
     ids = ListFilter(field_name='id', lookup_expr='in')
     title = CharFilter(field_name='title', lookup_expr='icontains')
+    workspace_id = CharFilter(field_name='workspace_id', lookup_expr='exact')
+    topic = CharFilter(field_name='topic_id', lookup_expr='exact')
 
 
 @method_decorator(
@@ -176,9 +182,22 @@ class ProjectListAPI(generics.ListCreateAPIView):
         serializer.is_valid(raise_exception=True)
         fields = serializer.validated_data.get('include')
         filter = serializer.validated_data.get('filter')
-        projects = Project.objects.filter(organization=self.request.user.active_organization).order_by(
+        include_archived = self.request.query_params.get('include_archived', 'false').lower() == 'true'
+        projects_model = Project.all_objects if include_archived else Project.objects
+        projects = projects_model.filter(organization=self.request.user.active_organization).order_by(
             F('pinned_at').desc(nulls_last=True), '-created_at'
         )
+        visibility_q = project_visibility_q(self.request.user)
+        if visibility_q.children:
+            projects = projects.filter(visibility_q).distinct()
+
+        workspace_id = self.request.query_params.get('workspace_id')
+        topic = self.request.query_params.get('topic')
+        if workspace_id:
+            projects = projects.filter(workspace_id=workspace_id)
+        if topic:
+            projects = projects.filter(topic_id=topic)
+
         if filter in ['pinned_only', 'exclude_pinned']:
             projects = projects.filter(pinned_at__isnull=filter == 'exclude_pinned')
         projects = ProjectManager.with_counts_annotate(projects, fields=fields)
@@ -189,7 +208,7 @@ class ProjectListAPI(generics.ListCreateAPIView):
         ):
             projects = projects.with_state()
 
-        return projects.prefetch_related('members', 'created_by')
+        return projects.select_related('topic').prefetch_related('members', 'created_by')
 
     def get_serializer_context(self):
         context = super(ProjectListAPI, self).get_serializer_context()
@@ -198,7 +217,19 @@ class ProjectListAPI(generics.ListCreateAPIView):
 
     def perform_create(self, ser):
         try:
-            ser.save(organization=self.request.user.active_organization)
+            organization = self.request.user.active_organization
+            workspace = ser.validated_data.get('workspace')
+            if workspace is None:
+                workspace, _ = Workspace.objects.get_or_create(
+                    organization=organization,
+                    title='General',
+                    defaults={'created_by': self.request.user},
+                )
+
+            if not can_manage_workspace(self.request.user, workspace):
+                raise PermissionDenied('You can only create projects within your assigned team.')
+
+            ser.save(organization=organization, workspace=workspace)
         except IntegrityError as e:
             if str(e) == 'UNIQUE constraint failed: project.title, project.created_by_id':
                 raise ProjectExistException(
@@ -253,7 +284,7 @@ class ProjectCountsListAPI(generics.ListAPIView):
         ):
             projects = projects.with_state()
 
-        return projects
+        return projects.select_related('topic')
 
 
 @method_decorator(
@@ -377,9 +408,14 @@ class ProjectAPI(generics.RetrieveUpdateDestroyAPIView):
         serializer = GetFieldsSerializer(data=self.request.query_params)
         serializer.is_valid(raise_exception=True)
         fields = serializer.validated_data.get('include')
-        projects = Project.objects.with_counts(fields=fields).filter(
+        include_archived = self.request.query_params.get('include_archived', 'false').lower() == 'true'
+        projects_model = Project.all_objects if include_archived else Project.objects
+        projects = projects_model.with_counts(fields=fields).filter(
             organization=self.request.user.active_organization
         )
+        visibility_q = project_visibility_q(self.request.user)
+        if visibility_q.children:
+            projects = projects.filter(visibility_q).distinct()
 
         # Only annotate FSM state for UI/API consumption when both feature flags are enabled
         if flag_set('fflag_feat_fit_568_finite_state_management', user=self.request.user) and flag_set(
@@ -387,7 +423,7 @@ class ProjectAPI(generics.RetrieveUpdateDestroyAPIView):
         ):
             projects = projects.with_state()
 
-        return projects
+        return projects.select_related('topic')
 
     def get(self, request, *args, **kwargs):
         return super(ProjectAPI, self).get(request, *args, **kwargs)
@@ -399,6 +435,8 @@ class ProjectAPI(generics.RetrieveUpdateDestroyAPIView):
     @api_webhook(WebhookAction.PROJECT_UPDATED)
     def patch(self, request, *args, **kwargs):
         project = self.get_object()
+        if project.archived_at is not None:
+            raise PermissionDenied('Archived projects are read-only. Restore project first.')
         label_config = self.request.data.get('label_config')
 
         # config changes can break view, so we need to reset them
@@ -411,6 +449,8 @@ class ProjectAPI(generics.RetrieveUpdateDestroyAPIView):
         return super(ProjectAPI, self).patch(request, *args, **kwargs)
 
     def perform_destroy(self, instance):
+        if instance.archived_at is not None:
+            raise PermissionDenied('Archived projects cannot be deleted. Restore first.')
         # we don't need to relaculate counters if we delete whole project
         with temporary_disconnect_all_signals():
             instance.delete()
@@ -418,7 +458,44 @@ class ProjectAPI(generics.RetrieveUpdateDestroyAPIView):
     @extend_schema(exclude=True)
     @api_webhook(WebhookAction.PROJECT_UPDATED)
     def put(self, request, *args, **kwargs):
+        project = self.get_object()
+        if project.archived_at is not None:
+            raise PermissionDenied('Archived projects are read-only. Restore project first.')
         return super(ProjectAPI, self).put(request, *args, **kwargs)
+
+
+@extend_schema(exclude=True)
+class ProjectArchiveAPI(generics.GenericAPIView):
+    parser_classes = (JSONParser, FormParser, MultiPartParser)
+    queryset = Project.all_objects.all()
+    permission_required = all_permissions.projects_change
+
+    def post(self, request, pk):
+        project = get_object_or_404(self.get_queryset().filter(organization=request.user.active_organization), pk=pk)
+        if project.archived_at is None:
+            project.archived_at = timezone.now()
+            project.archived_by = request.user
+            project.save(update_fields=['archived_at', 'archived_by'])
+
+        serializer = ProjectSerializer(project, context={'request': request})
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+@extend_schema(exclude=True)
+class ProjectRestoreAPI(generics.GenericAPIView):
+    parser_classes = (JSONParser, FormParser, MultiPartParser)
+    queryset = Project.all_objects.all()
+    permission_required = all_permissions.projects_change
+
+    def post(self, request, pk):
+        project = get_object_or_404(self.get_queryset().filter(organization=request.user.active_organization), pk=pk)
+        if project.archived_at is not None:
+            project.archived_at = None
+            project.archived_by = None
+            project.save(update_fields=['archived_at', 'archived_by'])
+
+        serializer = ProjectSerializer(project, context={'request': request})
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
 
 # @method_decorator(
@@ -856,7 +933,7 @@ class ProjectModelVersions(generics.RetrieveAPIView):
     permission_required = all_permissions.projects_view
 
     def get_queryset(self):
-        return Project.objects.filter(organization=self.request.user.active_organization)
+        return Project.objects.for_user(self.request.user)
 
     def get(self, request, *args, **kwargs):
         project = self.get_object()

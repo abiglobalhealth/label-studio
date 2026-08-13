@@ -10,6 +10,34 @@ function formatDate(date?: string) {
   return format(new Date(date ?? ""), "dd MMM yyyy, KK:mm a");
 }
 
+function formatRole(rawRole?: string) {
+  const role = String(rawRole ?? "").toUpperCase();
+
+  switch (role) {
+    case "OWNER":
+    case "OW":
+      return "Owner";
+    case "ADMIN":
+    case "AD":
+      return "Administrator";
+    case "MANAGER":
+    case "MA":
+      return "Manager";
+    case "ANNOTATOR":
+    case "AN":
+      return "Annotator";
+    case "VIEWER":
+    case "RE":
+      return "Viewer";
+    case "DI":
+      return "Deactivated";
+    case "NO":
+      return "Pending";
+    default:
+      return role ? `${role.charAt(0)}${role.slice(1).toLowerCase()}` : "Unknown";
+  }
+}
+
 export const MembershipInfo = () => {
   const { user } = useAuth();
   const dateJoined = useMemo(() => {
@@ -36,31 +64,7 @@ export const MembershipInfo = () => {
 
       const annotationCount = response?.annotations_count;
       const contributions = response?.contributed_projects_count;
-      let role = "Owner";
-
-      switch (response.role) {
-        case "OW":
-          role = "Owner";
-          break;
-        case "DI":
-          role = "Deactivated";
-          break;
-        case "AD":
-          role = "Administrator";
-          break;
-        case "MA":
-          role = "Manager";
-          break;
-        case "AN":
-          role = "Annotator";
-          break;
-        case "RE":
-          role = "Reviewer";
-          break;
-        case "NO":
-          role = "Pending";
-          break;
-      }
+      const role = formatRole(response.role);
 
       return {
         annotationCount,

@@ -46,6 +46,8 @@
 
     &.name {
       flex: 1;
+      justify-content: flex-start;
+      text-align: left;
     }
 
     &.email {
@@ -54,6 +56,14 @@
 
     &.last-activity {
       width: 160px;
+      justify-content: flex-start;
+      text-align: left;
+    }
+
+    &.role {
+      width: 140px;
+      justify-content: center;
+      text-align: center;
     }
   }
 

@@ -729,7 +729,7 @@ export const Select = forwardRef(
         </PopoverContent>
         <select
           name={props?.name}
-          value={selectedOptions.join(",") ?? ""}
+          value={selectedOptions.map((option) => option?.value ?? option).join(",")}
           ref={ref}
           disabled={disabled}
           className={styles.valueInput}

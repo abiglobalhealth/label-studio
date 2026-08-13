@@ -1698,7 +1698,7 @@ stages:
         "total": 1,
         "tasks": [
         {
-          "storage_filename": "/tmp/files/subdir/test_image2.png",
+          "storage_filename": "{os_independent_path}",
           "project": !int "{project_pk}"
         }
         ]
