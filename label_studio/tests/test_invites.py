@@ -101,6 +101,7 @@ def test_scoped_invite_applies_role_and_workspace(business_client, client):
     )
 
     assert response.status_code == 201, response.content
+    assert response.json()['max_uses'] == 1
     invite_url = response.json()['invite_url']
 
     response = client.post(

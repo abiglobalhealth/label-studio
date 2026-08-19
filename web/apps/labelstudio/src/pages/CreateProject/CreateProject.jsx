@@ -1,4 +1,5 @@
 import { Select, Typography } from "@humansignal/ui";
+import { useAuth } from "@humansignal/core/providers/AuthProvider";
 import React from "react";
 import { useHistory } from "react-router";
 import { ToggleItems } from "../../components";
@@ -15,6 +16,7 @@ import { useImportPage } from "./Import/useImportPage";
 import { useDraftProject } from "./utils/useDraftProject";
 import { Input, TextArea } from "../../components/Form";
 import { createURL } from "../../components/HeidiTips/utils";
+import { hasPermission } from "../../utils/permissions";
 
 const ProjectName = ({
   name,
@@ -31,6 +33,12 @@ const ProjectName = ({
   topicId,
   setTopicId,
   topicOptions,
+  newTopicTitle,
+  setNewTopicTitle,
+  onCreateTopic,
+  creatingTopic,
+  topicCreateError,
+  canCreateTopic,
 }) =>
   !show ? null : (
     <form
@@ -104,6 +112,25 @@ const ProjectName = ({
           options={topicOptions}
           triggerClassName="!flex-1"
         />
+        <div className="flex gap-2 items-start">
+          <Input
+            value={newTopicTitle}
+            placeholder="New topic name"
+            onChange={(value) => setNewTopicTitle(typeof value === "string" ? value : value?.target?.value ?? "")}
+            className="flex-1"
+          />
+          <Button
+            type="button"
+            look="outlined"
+            onClick={onCreateTopic}
+            disabled={!canCreateTopic || !newTopicTitle.trim() || creatingTopic}
+            waiting={creatingTopic}
+            aria-label="Create topic"
+          >
+            Create
+          </Button>
+        </div>
+        {topicCreateError && <span className="text-negative-content">{topicCreateError}</span>}
       </div>
     </form>
   );
@@ -115,6 +142,8 @@ export const CreateProject = ({ onClose }) => {
   const { project, setProject: updateProject } = useDraftProject();
   const history = useHistory();
   const api = useAPI();
+  const { user } = useAuth();
+  const canCreateTopic = hasPermission(user, "topics.create");
 
   const [name, setName] = React.useState("");
   const [error, setError] = React.useState();
@@ -124,6 +153,9 @@ export const CreateProject = ({ onClose }) => {
   const [workspaceOptions, setWorkspaceOptions] = React.useState([]);
   const [topicId, setTopicId] = React.useState();
   const [topicOptions, setTopicOptions] = React.useState([]);
+  const [newTopicTitle, setNewTopicTitle] = React.useState("");
+  const [creatingTopic, setCreatingTopic] = React.useState(false);
+  const [topicCreateError, setTopicCreateError] = React.useState();
 
   const setStep = React.useCallback((step) => {
     _setStep(step);
@@ -175,6 +207,30 @@ export const CreateProject = ({ onClose }) => {
       setTopicOptions(topics.map((topic) => ({ value: String(topic.id), label: topic.title })));
     });
   }, [api]);
+
+  const onCreateTopic = React.useCallback(async () => {
+    const title = newTopicTitle.trim();
+    if (!title || creatingTopic) return;
+
+    setCreatingTopic(true);
+    setTopicCreateError(undefined);
+
+    try {
+      const response = await api.callApi("createTopic", { body: { title } });
+      if (!response?.id) {
+        setTopicCreateError("Unable to create topic");
+        return;
+      }
+
+      setTopicOptions((options) => [...options, { value: String(response.id), label: response.title || title }]);
+      setTopicId(String(response.id));
+      setNewTopicTitle("");
+    } catch (error) {
+      setTopicCreateError(error?.message || "Unable to create topic");
+    } finally {
+      setCreatingTopic(false);
+    }
+  }, [api, creatingTopic, newTopicTitle]);
 
   React.useEffect(() => {
     if (!project) return;
@@ -287,6 +343,12 @@ export const CreateProject = ({ onClose }) => {
           topicId={topicId}
           setTopicId={setTopicId}
           topicOptions={topicOptions}
+          newTopicTitle={newTopicTitle}
+          setNewTopicTitle={setNewTopicTitle}
+          onCreateTopic={onCreateTopic}
+          creatingTopic={creatingTopic}
+          topicCreateError={topicCreateError}
+          canCreateTopic={canCreateTopic}
           show={step === "name"}
         />
         <ImportPage
