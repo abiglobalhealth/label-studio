@@ -62,20 +62,17 @@ def user_signup(request):
         invite_preset = None
         if token:
             organization, invite_preset = Organization.resolve_invite_token(token)
-        else:
-            organization = Organization.objects.first()
 
-        if settings.DISABLE_SIGNUP_WITHOUT_LINK is True:
-            if not (token and organization):
-                raise PermissionDenied()
-        else:
-            if token and not organization:
-                raise PermissionDenied()
+        # All signups must come through a valid invitation. The setting is kept
+        # for backwards compatibility, but cannot weaken this requirement.
+        if not (token and organization):
+            raise PermissionDenied()
 
         if organization is not None:
             request.invite_organization = organization
         if invite_preset is not None:
             request.invite_preset = invite_preset
+        request.invite_token = token
 
         user_form = forms.UserSignupForm(request.POST)
         organization_form = OrganizationSignupForm(request.POST)

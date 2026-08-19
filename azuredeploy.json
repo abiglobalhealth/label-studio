@@ -121,7 +121,7 @@
             },
             {
               "name": "DISABLE_SIGNUP_WITHOUT_LINK",
-              "value": "0"
+              "value": "1"
             },
             {
               "name": "LABEL_STUDIO_ONE_CLICK_DEPLOY",

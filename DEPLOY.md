@@ -31,8 +31,8 @@ export ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
    From the cloned repository and desired branch:
 
 ```
-git checkout feat/rbac
-git pull --ff-only origin feat/rbac
+git checkout develop
+git pull --ff-only origin develop
 
 export IMAGE_TAG=$(git rev-parse HEAD)
 

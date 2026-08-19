@@ -8,9 +8,12 @@ from core.utils.common import load_func
 from django import forms
 from django.conf import settings
 from django.contrib import auth
+from django.core.exceptions import PermissionDenied
 from django.core.files.images import get_image_dimensions
+from django.db import transaction
 from django.shortcuts import redirect
 from django.urls import reverse
+from organizations.models import InvitePreset
 from organizations.models import Organization
 from organizations.models import OrganizationMember
 
@@ -58,48 +61,68 @@ def check_avatar(files):
 
 def save_user(request, next_page, user_form):
     """Save user instance to DB"""
-    user = user_form.save()
-    user.username = user.email.split('@')[0]
-    user.save()
-
     invite_organization = getattr(request, 'invite_organization', None)
     invite_preset = getattr(request, 'invite_preset', None)
+    invite_token = getattr(request, 'invite_token', None)
 
-    if invite_organization is not None:
-        org = invite_organization
-        org.add_user(user)
-    elif Organization.objects.exists():
-        org = Organization.objects.first()
-        org.add_user(user)
-    else:
-        org = Organization.create_organization(created_by=user, title='Label Studio')
+    with transaction.atomic():
+        user = user_form.save()
+        user.username = user.email.split('@')[0]
+        user.save()
 
-    membership = OrganizationMember.objects.filter(
-        user=user,
-        organization=org,
-        deleted_at__isnull=True,
-    ).first()
+        if invite_organization is not None:
+            if invite_preset is not None:
+                org = invite_organization
+            else:
+                # Lock and validate the organization token so concurrent
+                # requests cannot both redeem the same base invite link.
+                org = Organization.objects.select_for_update().get(pk=invite_organization.pk)
+                if not invite_token or org.token != invite_token:
+                    raise PermissionDenied('This invitation link has already been used or is invalid.')
+            org.add_user(user)
+        elif Organization.objects.exists():
+            org = Organization.objects.first()
+            org.add_user(user)
+        else:
+            org = Organization.create_organization(created_by=user, title='Label Studio')
 
-    if membership is not None and invite_preset is not None:
-        membership.role = invite_preset.default_role
-        membership.save(update_fields=['role'])
+        membership = OrganizationMember.objects.filter(
+            user=user,
+            organization=org,
+            deleted_at__isnull=True,
+        ).first()
 
-        from workspaces.models import TeamMember, WorkspaceUserAssignment
+        if membership is not None and invite_preset is not None:
+            invite_preset = InvitePreset.objects.select_for_update().get(pk=invite_preset.pk)
+            if not invite_preset.is_available_for_use():
+                raise PermissionDenied('This invitation link has already been used or is invalid.')
 
-        if invite_preset.team_ids:
-            valid_team_ids = set(org.teams.filter(id__in=invite_preset.team_ids).values_list('id', flat=True))
-            for team_id in valid_team_ids:
-                TeamMember.objects.get_or_create(team_id=team_id, user=user)
+            membership.role = invite_preset.default_role
+            membership.save(update_fields=['role'])
 
-        if invite_preset.workspace_ids:
-            valid_workspace_ids = set(org.workspaces.filter(id__in=invite_preset.workspace_ids).values_list('id', flat=True))
-            for workspace_id in valid_workspace_ids:
-                WorkspaceUserAssignment.objects.get_or_create(workspace_id=workspace_id, user=user)
+            from workspaces.models import TeamMember, WorkspaceUserAssignment
 
-        invite_preset.consume()
+            if invite_preset.team_ids:
+                valid_team_ids = set(org.teams.filter(id__in=invite_preset.team_ids).values_list('id', flat=True))
+                for team_id in valid_team_ids:
+                    TeamMember.objects.get_or_create(team_id=team_id, user=user)
 
-    user.active_organization = org
-    user.save(update_fields=['active_organization'])
+            if invite_preset.workspace_ids:
+                valid_workspace_ids = set(
+                    org.workspaces.filter(id__in=invite_preset.workspace_ids).values_list('id', flat=True)
+                )
+                for workspace_id in valid_workspace_ids:
+                    WorkspaceUserAssignment.objects.get_or_create(workspace_id=workspace_id, user=user)
+
+            if not invite_preset.consume():
+                raise PermissionDenied('This invitation link has already been used or is invalid.')
+        elif invite_organization is not None:
+            # Rotate the base link after redemption. The old URL is invalid,
+            # while administrators can fetch the newly generated link.
+            org.reset_token()
+
+        user.active_organization = org
+        user.save(update_fields=['active_organization'])
 
     request.advanced_json = {
         'email': user.email,

@@ -547,7 +547,9 @@ class OrganizationInvitePresetListCreateAPI(APIView):
         team_ids = serializer.validated_data.get('team_ids', [])
         workspace_ids = serializer.validated_data.get('workspace_ids', [])
         expires_at = serializer.validated_data.get('expires_at')
-        max_uses = serializer.validated_data.get('max_uses')
+        # All invite links are single-use. Keep the field in the API for
+        # compatibility, but persist the enforced value.
+        max_uses = 1
 
         requester_membership = get_active_membership(request.user, organization=org)
         if requester_membership and requester_membership.role == OrganizationMember.Roles.MANAGER:
