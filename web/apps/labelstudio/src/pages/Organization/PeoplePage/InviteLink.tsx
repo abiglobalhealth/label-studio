@@ -359,6 +359,23 @@ const InvitationFooter = ({
   const { refetch, data: link } = useAtomValue(linkAtom);
   const activeLink = scopedLink ?? link;
 
+  const copyInviteLink = useCallback(async () => {
+    let linkToCopy = activeLink ?? "";
+
+    // Base links rotate after signup, so refresh immediately before copying
+    // to avoid handing out a previously consumed token.
+    if (!scopedLink) {
+      try {
+        const refreshed = await refetch();
+        linkToCopy = refreshed.data ?? linkToCopy;
+      } catch {
+        // Fall back to the cached link if the refresh is temporarily unavailable.
+      }
+    }
+
+    copyText(linkToCopy);
+  }, [activeLink, copyText, refetch, scopedLink]);
+
   const resetBaseLink = useCallback(async () => {
     await API.invoke("resetInviteLink");
     setScopedLink(null);
@@ -382,7 +399,7 @@ const InvitationFooter = ({
         <Button
           variant={copied ? "positive" : "primary"}
           className="w-[170px]"
-          onClick={() => copyText(activeLink ?? "")}
+          onClick={copyInviteLink}
           disabled={copyDisabled}
           aria-label="Copy invite link"
         >
