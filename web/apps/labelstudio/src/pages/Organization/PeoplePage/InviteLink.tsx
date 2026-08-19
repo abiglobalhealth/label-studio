@@ -24,6 +24,8 @@ const ROLE_OPTIONS = [
   { value: "ADMIN", label: "Admin" },
 ];
 
+type InviteScopeOption = { id: number; title: string };
+
 export function InviteLink({
   opened,
   onOpened,
@@ -35,6 +37,7 @@ export function InviteLink({
 }) {
   const modalRef = useRef<Modal>();
   const [scopedLink, setScopedLink] = useState<string | null>(null);
+  const [requiresScopedLink, setRequiresScopedLink] = useState(false);
 
   useEffect(() => {
     if (modalRef.current && opened) {
@@ -50,8 +53,21 @@ export function InviteLink({
       title="Invite members"
       opened={opened}
       bareFooter={true}
-      body={<InvitationModal scopedLink={scopedLink} setScopedLink={setScopedLink} />}
-      footer={<InvitationFooter scopedLink={scopedLink} setScopedLink={setScopedLink} />}
+      body={
+        <InvitationModal
+          opened={opened}
+          scopedLink={scopedLink}
+          setScopedLink={setScopedLink}
+          onConfigurationChange={setRequiresScopedLink}
+        />
+      }
+      footer={
+        <InvitationFooter
+          scopedLink={scopedLink}
+          setScopedLink={setScopedLink}
+          copyDisabled={requiresScopedLink && !scopedLink}
+        />
+      }
       style={{ width: 680, height: 560 }}
       onHide={onClosed}
       onShow={onOpened}
@@ -60,11 +76,15 @@ export function InviteLink({
 }
 
 const InvitationModal = ({
+  opened,
   scopedLink,
   setScopedLink,
+  onConfigurationChange,
 }: {
+  opened: boolean;
   scopedLink: string | null;
   setScopedLink: (value: string | null) => void;
+  onConfigurationChange: (requiresScopedLink: boolean) => void;
 }) => {
   const toast = useToast();
   const { data: link } = useAtomValue(linkAtom);
@@ -75,7 +95,6 @@ const InvitationModal = ({
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | undefined>();
   const [teamIds, setTeamIds] = useState<number[]>([]);
   const [workspaceIds, setWorkspaceIds] = useState<number[]>([]);
-  const [maxUses, setMaxUses] = useState("");
   const [lastPresetSummary, setLastPresetSummary] = useState<string | null>(null);
 
   const activeLink = scopedLink ?? link;
@@ -94,59 +113,99 @@ const InvitationModal = ({
     [allWorkspaces],
   );
 
+  const invalidateScopedLink = useCallback(() => {
+    setScopedLink(null);
+    setLastPresetSummary(null);
+  }, [setScopedLink]);
+
   useEffect(() => {
+    const requiresScopedLink = defaultRole !== "ANNOTATOR" || teamIds.length > 0 || workspaceIds.length > 0;
+    onConfigurationChange(requiresScopedLink);
+  }, [defaultRole, teamIds, workspaceIds, onConfigurationChange]);
+
+  useEffect(() => {
+    if (!opened) return;
+
     let mounted = true;
+
+    const normalizeList = (response: unknown): InviteScopeOption[] => {
+      const wrappedResponse = response as { $meta?: { ok?: boolean }; error?: string; results?: unknown };
+      if (wrappedResponse?.$meta && !wrappedResponse.$meta.ok) {
+        throw new Error(wrappedResponse.error || "Failed to load invite options");
+      }
+
+      const list = Array.isArray(response)
+        ? response
+        : Array.isArray(wrappedResponse?.results)
+          ? wrappedResponse.results
+          : [];
+
+      return list.filter(
+        (item): item is InviteScopeOption =>
+          Boolean(item) && typeof item === "object" && "id" in item && "title" in item,
+      );
+    };
 
     Promise.all([API.invoke("teams"), API.invoke("workspaces")])
       .then(([teamsResponse, workspacesResponse]) => {
         if (!mounted) return;
-        const teams = teamsResponse?.results ?? teamsResponse ?? [];
-        const workspaces = workspacesResponse?.results ?? workspacesResponse ?? [];
+        const teams = normalizeList(teamsResponse);
+        const workspaces = normalizeList(workspacesResponse);
 
         setAllTeams(teams);
         setAllWorkspaces(workspaces);
       })
-      .catch(() => {
+      .catch((error) => {
         if (!mounted) return;
         setAllTeams([]);
         setAllWorkspaces([]);
+        toast.show({ message: error?.message || "Failed to load teams and workspaces", type: "error" });
       });
 
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [opened, toast]);
+
+  const updateDefaultRole = useCallback(
+    (value: string) => {
+      setDefaultRole(value);
+      invalidateScopedLink();
+    },
+    [invalidateScopedLink],
+  );
 
   const addTeam = useCallback(() => {
     const parsedTeamId = Number(selectedTeamId);
     if (!parsedTeamId || teamIds.includes(parsedTeamId)) return;
     setTeamIds((prev) => [...prev, parsedTeamId]);
     setSelectedTeamId(undefined);
-  }, [selectedTeamId, teamIds]);
+    invalidateScopedLink();
+  }, [selectedTeamId, teamIds, invalidateScopedLink]);
 
   const removeTeam = useCallback((teamId: number) => {
     setTeamIds((prev) => prev.filter((id) => id !== teamId));
-  }, []);
+    invalidateScopedLink();
+  }, [invalidateScopedLink]);
 
   const addWorkspace = useCallback(() => {
     const parsedWorkspaceId = Number(selectedWorkspaceId);
     if (!parsedWorkspaceId || workspaceIds.includes(parsedWorkspaceId)) return;
     setWorkspaceIds((prev) => [...prev, parsedWorkspaceId]);
     setSelectedWorkspaceId(undefined);
-  }, [selectedWorkspaceId, workspaceIds]);
+    invalidateScopedLink();
+  }, [selectedWorkspaceId, workspaceIds, invalidateScopedLink]);
 
   const removeWorkspace = useCallback((workspaceId: number) => {
     setWorkspaceIds((prev) => prev.filter((id) => id !== workspaceId));
-  }, []);
+    invalidateScopedLink();
+  }, [invalidateScopedLink]);
 
   const createScopedLink = useCallback(async () => {
     const body: Record<string, unknown> = { default_role: defaultRole };
 
-    const parsedMaxUses = Number(maxUses);
-
     if (teamIds.length) body.team_ids = teamIds;
     if (workspaceIds.length) body.workspace_ids = workspaceIds;
-    if (maxUses && Number.isInteger(parsedMaxUses) && parsedMaxUses > 0) body.max_uses = parsedMaxUses;
 
     const result = await API.invoke("createInviteLink", {}, { body });
 
@@ -162,7 +221,7 @@ const InvitationModal = ({
         `Role: ${roleLabelByValue[defaultRole] ?? defaultRole}`,
         `Teams: ${selectedTeamTitles.length ? selectedTeamTitles.join(", ") : "None"}`,
         `Workspaces: ${selectedWorkspaceTitles.length ? selectedWorkspaceTitles.join(", ") : "None"}`,
-        `Max Uses: ${maxUses && Number.isInteger(parsedMaxUses) && parsedMaxUses > 0 ? parsedMaxUses : "Unlimited"}`,
+        "Valid for one signup",
       ].join(" · ");
 
       setLastPresetSummary(summary);
@@ -171,7 +230,7 @@ const InvitationModal = ({
     }
 
     toast.show({ message: "Failed to create scoped link", type: "error" });
-  }, [defaultRole, teamIds, workspaceIds, maxUses, setScopedLink, toast, allTeams, allWorkspaces, roleLabelByValue]);
+  }, [defaultRole, teamIds, workspaceIds, setScopedLink, toast, allTeams, allWorkspaces, roleLabelByValue]);
 
   return (
     <div className={cn("invite").toClassName()}>
@@ -187,7 +246,7 @@ const InvitationModal = ({
         <label className="text-neutral-content-subtle text-[12px]">Default role</label>
         <select
           value={defaultRole}
-          onChange={(event) => setDefaultRole(event.target.value)}
+          onChange={(event) => updateDefaultRole(event.target.value)}
           className="h-10 rounded border border-neutral-border bg-neutral-background px-3"
         >
           {roleOptions.map((option) => (
@@ -232,9 +291,12 @@ const InvitationModal = ({
           <select
             value={selectedWorkspaceId ?? ""}
             onChange={(event) => setSelectedWorkspaceId(event.target.value || undefined)}
+            disabled={!workspaceOptions.length}
             className="h-10 rounded border border-neutral-border bg-neutral-background px-3 flex-1"
           >
-            <option value="">Select workspace</option>
+            <option value="">
+              {workspaceOptions.length ? "Select workspace" : "No workspaces available"}
+            </option>
             {workspaceOptions.map((option) => (
               <option key={option.value} value={option.value}>
                 {option.label}
@@ -257,13 +319,6 @@ const InvitationModal = ({
           })}
         </div>
 
-        <Input
-          value={maxUses}
-          onChange={(eventOrValue) =>
-            setMaxUses(typeof eventOrValue === "string" ? eventOrValue : eventOrValue?.target?.value ?? "")
-          }
-          placeholder="Max uses (optional), e.g. 10"
-        />
         <Button onClick={createScopedLink} look="outlined" aria-label="Create scoped invite link">
           Create scoped link
         </Button>
@@ -294,13 +349,32 @@ const InvitationModal = ({
 const InvitationFooter = ({
   scopedLink,
   setScopedLink,
+  copyDisabled,
 }: {
   scopedLink: string | null;
   setScopedLink: (value: string | null) => void;
+  copyDisabled: boolean;
 }) => {
   const { copyText, copied } = useTextCopy();
   const { refetch, data: link } = useAtomValue(linkAtom);
   const activeLink = scopedLink ?? link;
+
+  const copyInviteLink = useCallback(async () => {
+    let linkToCopy = activeLink ?? "";
+
+    // Base links rotate after signup, so refresh immediately before copying
+    // to avoid handing out a previously consumed token.
+    if (!scopedLink) {
+      try {
+        const refreshed = await refetch();
+        linkToCopy = refreshed.data ?? linkToCopy;
+      } catch {
+        // Fall back to the cached link if the refresh is temporarily unavailable.
+      }
+    }
+
+    copyText(linkToCopy);
+  }, [activeLink, copyText, refetch, scopedLink]);
 
   const resetBaseLink = useCallback(async () => {
     await API.invoke("resetInviteLink");
@@ -325,10 +399,11 @@ const InvitationFooter = ({
         <Button
           variant={copied ? "positive" : "primary"}
           className="w-[170px]"
-          onClick={() => copyText(activeLink ?? "")}
+          onClick={copyInviteLink}
+          disabled={copyDisabled}
           aria-label="Copy invite link"
         >
-          {copied ? "Copied!" : "Copy link"}
+          {copyDisabled ? "Create link first" : copied ? "Copied!" : "Copy link"}
         </Button>
       </Space>
     </Space>

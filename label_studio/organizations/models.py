@@ -5,7 +5,6 @@ import logging
 from core.utils.common import create_hash, load_func
 from django.conf import settings
 from django.db import models, transaction
-from django.db.models import F
 from django.db.models import Count, Q
 from django.utils import timezone
 from django.utils.functional import cached_property
@@ -206,11 +205,13 @@ class Organization(OrganizationMixin, models.Model):
 
         preset = (
             InvitePreset.objects.select_related('organization')
-            .filter(token=token, is_active=True)
+            .filter(token=token)
             .first()
         )
-        if preset and preset.is_available_for_use():
-            return preset.organization, preset
+        if preset:
+            if preset.is_available_for_use():
+                return preset.organization, preset
+            return None, None
 
         organization = Organization.objects.filter(token=token).first()
         return organization, None
@@ -288,10 +289,20 @@ class InvitePreset(models.Model):
             return False
         if self.expires_at and self.expires_at <= now:
             return False
-        if self.max_uses is not None and self.uses_count >= self.max_uses:
+        # Invite links are intentionally single-use. Keep max_uses on the
+        # model for compatibility with existing data and API responses, but
+        # never allow it to expand the lifetime of a token.
+        if self.uses_count >= 1:
             return False
         return True
 
     def consume(self):
-        InvitePreset.objects.filter(pk=self.pk).update(uses_count=F('uses_count') + 1)
-        self.refresh_from_db(fields=['uses_count'])
+        updated = InvitePreset.objects.filter(
+            pk=self.pk,
+            is_active=True,
+            uses_count=0,
+        ).update(uses_count=1, is_active=False)
+        if updated:
+            self.uses_count = 1
+            self.is_active = False
+        return bool(updated)

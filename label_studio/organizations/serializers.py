@@ -198,7 +198,12 @@ class InvitePresetCreateSerializer(serializers.Serializer):
     team_ids = serializers.ListField(child=serializers.IntegerField(min_value=1), required=False)
     workspace_ids = serializers.ListField(child=serializers.IntegerField(min_value=1), required=False)
     expires_at = serializers.DateTimeField(required=False, allow_null=True)
-    max_uses = serializers.IntegerField(required=False, allow_null=True, min_value=1)
+    max_uses = serializers.IntegerField(default=1, required=False, allow_null=True, min_value=1)
+
+    def validate_max_uses(self, value):
+        if value not in (None, 1):
+            raise serializers.ValidationError('Invite links can only be used once.')
+        return 1
 
     def validate_default_role(self, value):
         if value == OrganizationMember.Roles.OWNER:
